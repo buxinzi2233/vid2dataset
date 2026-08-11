@@ -1,15 +1,9 @@
 //! extract domain commands: source discovery, probe, run, cancel, advanced.
-//!
-//! `start_run` / `cancel_run` forward to the live sidecar. The rest are typed
-//! stubs (sidecar methods listed in `docs/api-contract.md` §2/§3).
-
-#![allow(dead_code)] // remaining stub arg fields become live with feature tasks.
 
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tauri::State;
 
-use crate::commands::config::not_impl;
 use crate::state::AppState;
 
 #[derive(Deserialize)]
@@ -84,8 +78,18 @@ pub fn cancel_run(state: State<'_, AppState>) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub fn adv_open(args: PathArgs) -> Result<Value, String> {
-    not_impl(&format!("adv_open({})", args.path))
+pub fn adv_open(args: PathArgs, state: State<'_, AppState>) -> Result<Value, String> {
+    let result = state
+        .bridge
+        .lock()
+        .unwrap()
+        .request("advanced.open", json!({ "path": args.path }));
+    if result.ok {
+        Ok(result.result)
+    } else {
+        let e = result.error.unwrap_or_default();
+        Err(format!("{}: {}", e.code, e.message))
+    }
 }
 
 #[derive(Deserialize)]
@@ -96,8 +100,18 @@ pub struct AdvSeekArgs {
 }
 
 #[tauri::command]
-pub fn adv_seek(args: AdvSeekArgs) -> Result<Value, String> {
-    not_impl(&format!("adv_seek({}, {})", args.path, args.frame))
+pub fn adv_seek(args: AdvSeekArgs, state: State<'_, AppState>) -> Result<Value, String> {
+    let result = state
+        .bridge
+        .lock()
+        .unwrap()
+        .request("advanced.seek", json!({ "path": args.path, "frame": args.frame }));
+    if result.ok {
+        Ok(result.result)
+    } else {
+        let e = result.error.unwrap_or_default();
+        Err(format!("{}: {}", e.code, e.message))
+    }
 }
 
 #[derive(Deserialize)]
@@ -109,6 +123,40 @@ pub struct AdvCaptureArgs {
 }
 
 #[tauri::command]
-pub fn adv_capture(args: AdvCaptureArgs) -> Result<Value, String> {
-    not_impl(&format!("adv_capture({}, {})", args.path, args.frame))
+pub fn adv_capture(args: AdvCaptureArgs, state: State<'_, AppState>) -> Result<Value, String> {
+    let result = state
+        .bridge
+        .lock()
+        .unwrap()
+        .request(
+            "advanced.capture",
+            json!({ "path": args.path, "frame": args.frame, "config": args.config }),
+        );
+    if result.ok {
+        Ok(result.result)
+    } else {
+        let e = result.error.unwrap_or_default();
+        Err(format!("{}: {}", e.code, e.message))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdvSegmentsArgs {
+    pub segments: Value,
+}
+
+#[tauri::command]
+pub fn adv_segments(args: AdvSegmentsArgs, state: State<'_, AppState>) -> Result<Value, String> {
+    let result = state
+        .bridge
+        .lock()
+        .unwrap()
+        .request("advanced.segments", json!({ "segments": args.segments }));
+    if result.ok {
+        Ok(result.result)
+    } else {
+        let e = result.error.unwrap_or_default();
+        Err(format!("{}: {}", e.code, e.message))
+    }
 }

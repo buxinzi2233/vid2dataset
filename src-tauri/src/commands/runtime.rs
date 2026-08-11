@@ -10,7 +10,6 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tauri::State;
 
-use crate::commands::config::not_impl;
 use crate::state::AppState;
 
 #[derive(Deserialize)]
@@ -132,7 +131,15 @@ pub fn gpu_status(state: State<'_, AppState>) -> Result<Value, String> {
     }
 }
 
+/// Fire-and-forget: sidecar answers fast with `{"started": true}` and streams
+/// `download.progress` / `download.done` events.
 #[tauri::command]
-pub fn gpu_download() -> Result<Value, String> {
-    not_impl("gpu_download")
+pub fn gpu_download(state: State<'_, AppState>) -> Result<Value, String> {
+    let result = state.bridge.lock().unwrap().request("gpu.download", json!({}));
+    if result.ok {
+        Ok(result.result)
+    } else {
+        let e = result.error.unwrap_or_default();
+        Err(format!("{}: {}", e.code, e.message))
+    }
 }

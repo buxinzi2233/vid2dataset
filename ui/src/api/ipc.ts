@@ -63,6 +63,53 @@ export function checkUpdate(): Promise<unknown> {
   return invoke("check_update");
 }
 
+export interface UpdateInfo {
+  available: boolean;
+  tag?: string;
+  version?: string;
+  name?: string;
+  notes?: string;
+  exe_url?: string | null;
+  exe_size?: number;
+}
+
+export function checkUpdateInfo(): Promise<UpdateInfo> {
+  return invoke("check_update");
+}
+
+export function installUpdate(): Promise<{ installed: boolean; reason?: string }> {
+  return invoke("install_update");
+}
+
+export function gpuDownload(): Promise<{ started: boolean }> {
+  return invoke("gpu_download");
+}
+
+export function advOpen(path: string): Promise<VideoMeta> {
+  return invoke("adv_open", { path });
+}
+
+export function advSeek(path: string, frame: number): Promise<{ frame_b64: string }> {
+  return invoke("adv_seek", { path, frame });
+}
+
+export function advCapture(path: string, frame: number, config: ExtractConfig): Promise<{ out_path: string }> {
+  return invoke("adv_capture", { path, frame, config });
+}
+
+export function advSegments(segments: Record<string, [number, number][]>): Promise<{ saved: boolean }> {
+  return invoke("adv_segments", { segments });
+}
+
+export interface VideoMeta {
+  path: string;
+  fps: number;
+  frame_count: number;
+  width: number;
+  height: number;
+  duration_s: number;
+}
+
 export interface HardwareProfile {
   vendor: string;
   gpu_name: string;

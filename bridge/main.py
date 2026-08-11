@@ -37,10 +37,6 @@ _run_lock = threading.Lock()
 # ── Method handlers ─────────────────────────────────────────────────────
 
 
-def _not_impl(name: str) -> None:
-    raise NotImplementedError(name)
-
-
 def _presets(_params: dict) -> list[dict]:
     return [{"name": n, "description": d} for n, d in list_presets()]
 
@@ -273,6 +269,160 @@ def _gpu_status(_params: dict) -> dict:
     }
 
 
+def _gpu_download(_params: dict) -> dict:
+    """Download the GPU runtime on a worker thread.
+
+    Returns immediately with ``{"started": true}``. Progress streams via
+    ``download.progress`` ({pkg, current, total}); completion via
+    ``download.done`` ({kind: "gpu", error?}).
+    """
+    from vid2dataset.gpu_runtime import download_runtime
+
+    def progress_cb(pkg: str, done: int, total: int) -> None:
+        _write({"event": "download.progress",
+                "data": {"pkg": pkg, "current": done, "total": total}})
+
+    def _worker() -> None:
+        try:
+            download_runtime(progress=progress_cb)
+            _write({"event": "download.done", "data": {"kind": "gpu"}})
+        except Exception as e:  # noqa: BLE001 - surfaced as an event
+            _write({"event": "download.done", "data": {"kind": "gpu", "error": str(e)}})
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return {"started": True}
+
+
+def _update_check(_params: dict) -> dict:
+    """Check for a newer release. Returns ReleaseInfo dict or ``None`` (up-to-date)."""
+    from vid2dataset.updater import fetch_latest_release
+
+    rel = fetch_latest_release()
+    if rel is None:
+        return {"available": False}
+    return {
+        "available": True,
+        "tag": rel.tag,
+        "version": rel.version,
+        "name": rel.name,
+        "notes": rel.notes,
+        "exe_url": rel.exe_url,
+        "exe_size": rel.exe_size,
+    }
+
+
+def _update_install(_params: dict) -> dict:
+    """Stage the latest release.
+
+    Only performs a real install when running from the packaged .exe; in dev
+    mode it reports ``reason="not-exe"`` without touching anything.
+    """
+    import sys
+    from pathlib import Path
+
+    from vid2dataset.updater import (
+        download_exe,
+        fetch_latest_release,
+        install_update,
+        is_newer,
+        is_running_as_exe,
+    )
+
+    rel = fetch_latest_release()
+    if rel is None:
+        return {"installed": False, "reason": "no-release"}
+    if rel.exe_url is None or not is_newer(rel.version):
+        return {"installed": False, "reason": "up-to-date"}
+    if not is_running_as_exe():
+        return {"installed": False, "reason": "not-exe"}
+
+    target = Path(sys.executable).parent / "vid2dataset_new.exe"
+    download_exe(rel.exe_url, target)
+    install_update(target)
+    return {"installed": True}
+
+
+def _advanced_open(params: dict) -> dict:
+    from pathlib import Path
+
+    from vid2dataset.io_utils import probe_video
+
+    meta = probe_video(Path(params["path"]))
+    return {
+        "path": str(meta.path),
+        "fps": meta.fps,
+        "frame_count": meta.frame_count,
+        "width": meta.width,
+        "height": meta.height,
+        "duration_s": meta.duration_s,
+    }
+
+
+def _advanced_seek(params: dict) -> dict:
+    import base64
+    from pathlib import Path
+
+    import cv2
+
+    from vid2dataset.io_utils import open_capture
+
+    path = Path(params["path"])
+    frame_idx = int(params["frame"])
+    with open_capture(path) as cap:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ok, frame = cap.read()
+    if not ok or frame is None:
+        raise RuntimeError(f"could not read frame {frame_idx} from {path.name}")
+    ok, buf = cv2.imencode(".jpg", frame)
+    if not ok:
+        raise RuntimeError("could not encode frame as JPEG")
+    return {"frame_b64": base64.b64encode(buf.tobytes()).decode("ascii")}
+
+
+def _advanced_capture(params: dict) -> dict:
+    from pathlib import Path
+
+    import cv2
+
+    from vid2dataset.extractor import _output_dir_for, process_single_frame
+    from vid2dataset.io_utils import open_capture, sanitize_stem
+
+    cfg = ExtractConfig(**params["config"])
+    path = Path(params["path"])
+    frame_idx = int(params["frame"])
+
+    with open_capture(path) as cap:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ok, frame = cap.read()
+    if not ok or frame is None:
+        raise RuntimeError(f"could not read frame {frame_idx} from {path.name}")
+
+    out_dir = _output_dir_for(cfg, path)
+    prefix = f"{sanitize_stem(path.stem)}_manual_"
+    seq = 1
+    if out_dir.exists():
+        seq = max(
+            (
+                int(p.stem[len(prefix):])
+                for p in out_dir.glob(f"{prefix}*")
+                if p.stem[len(prefix):].isdigit()
+            ),
+            default=0,
+        ) + 1
+
+    out_path = process_single_frame(cfg, frame, path, seq)
+    if out_path is None:
+        raise RuntimeError("could not process frame")
+    return {"out_path": str(out_path)}
+
+
+# Advanced-mode segments are applied on the next extract.run via the config
+# dict; this method just acknowledges the handoff (kept for contract parity).
+def _advanced_segments(params: dict) -> dict:
+    _ = params.get("segments")
+    return {"saved": True}
+
+
 METHODS: dict[str, Callable[[dict], object]] = {
     "config.defaults": _config_defaults,
     "config.validate": _config_validate,
@@ -287,13 +437,13 @@ METHODS: dict[str, Callable[[dict], object]] = {
     "tagger.run": _tagger_run,
     "gpu.detect": _gpu_detect,
     "gpu.status": _gpu_status,
-    "gpu.download": lambda p: _not_impl("gpu.download"),
-    "update.check": lambda p: _not_impl("update.check"),
-    "update.install": lambda p: _not_impl("update.install"),
-    "advanced.open": lambda p: _not_impl("advanced.open"),
-    "advanced.seek": lambda p: _not_impl("advanced.seek"),
-    "advanced.capture": lambda p: _not_impl("advanced.capture"),
-    "advanced.segments": lambda p: _not_impl("advanced.segments"),
+    "gpu.download": _gpu_download,
+    "update.check": _update_check,
+    "update.install": _update_install,
+    "advanced.open": _advanced_open,
+    "advanced.seek": _advanced_seek,
+    "advanced.capture": _advanced_capture,
+    "advanced.segments": _advanced_segments,
 }
 
 

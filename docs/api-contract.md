@@ -70,13 +70,13 @@ stdout 只写协议帧；Python 日志输出到 **stderr**（Rust 单独线程�
 | `tagger.run` | `{folder, model_name?, trigger_word?, blacklist?, require?, exclude?, always?, trait_prune_threshold?, general_threshold?, character_threshold?, use_gpu?}` | `{"started": true}`（事件流 `extract.progress`(`tag:tagging`) → `tagger.done`） | ✅ 真接通 |
 | `gpu.detect` | `{}` | `HardwareProfile` | ✅ 真接通 |
 | `gpu.status` | `{}` | `RuntimeStatus` | ✅ 真接通 |
-| `gpu.download` | `{}` | `null`（事件流 `download.progress`） | stub |
-| `update.check` | `{}` | `ReleaseInfo | null`（null=已最新） | stub |
-| `update.install` | `{}` | `null` | stub |
-| `advanced.open` | `{"path": str}` | `VideoMeta` | stub |
-| `advanced.seek` | `{"path": str, "frame": int}` | `{"frame_b64": str}`（JPEG base64） | stub |
-| `advanced.capture` | `{"path": str, "frame": int, "config": {...}}` | `{"out_path": str}` | stub |
-| `advanced.segments` | `{"segments": {...}}` | `null`（暂存） | stub |
+| `gpu.download` | `{}` | `{"started": true}`（事件流 `download.progress` → `download.done`） | ✅ 真接通 |
+| `update.check` | `{}` | `{"available": bool, tag?, version?, name?, notes?, exe_url?, exe_size?}` | ✅ 真接通 |
+| `update.install` | `{}` | `{"installed": bool, reason?}`（`not-exe`/`up-to-date`/`no-release`） | ✅ 真接通 |
+| `advanced.open` | `{"path": str}` | `VideoMeta` | ✅ 真接通 |
+| `advanced.seek` | `{"path": str, "frame": int}` | `{"frame_b64": str}`（JPEG base64） | ✅ 真接通 |
+| `advanced.capture` | `{"path": str, "frame": int, "config": {...}}` | `{"out_path": str}` | ✅ 真接通 |
+| `advanced.segments` | `{"segments": {...}}` | `{"saved": true}`（随下次 extract.run 的 config 应用） | ✅ 真接通 |
 
 ---
 
@@ -102,12 +102,13 @@ stdout 只写协议帧；Python 日志输出到 **stderr**（Rust 单独线程�
 | `tagger_download` | `{ model }` | `null` | bridge `tagger.download` |
 | `gpu_detect` | – | `HardwareProfile` | bridge `gpu.detect` |
 | `gpu_status` | – | `RuntimeStatus` | bridge `gpu.status` |
-| `gpu_download` | – | `null` | bridge `gpu.download` |
-| `check_update` | – | `ReleaseInfo \| null` | bridge `update.check` |
-| `install_update` | – | `null` | bridge `update.install` |
+| `gpu_download` | – | `{ started: bool }` | bridge `gpu.download` |
+| `check_update` | – | `UpdateInfo` | bridge `update.check` |
+| `install_update` | – | `{ installed, reason? }` | bridge `update.install` |
 | `adv_open` | `{ path }` | `VideoMeta` | bridge `advanced.open` |
-| `adv_seek` | `{ path, frame }` | `string`（JPEG base64） | bridge `advanced.seek` |
-| `adv_capture` | `{ path, frame, config }` | `string`（out_path） | bridge `advanced.capture` |
+| `adv_seek` | `{ path, frame }` | `{ frame_b64 }`（JPEG base64） | bridge `advanced.seek` |
+| `adv_capture` | `{ path, frame, config }` | `{ out_path }` | bridge `advanced.capture` |
+| `adv_segments` | `{ segments }` | `{ saved }` | bridge `advanced.segments` |
 | `open_folder` | `{ path }` | `null` | opener 插件/OS |
 
 ### 前端数据模型（`ui/src/api/types.ts`，由 Pydantic 生成）

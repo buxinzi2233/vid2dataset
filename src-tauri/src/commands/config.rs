@@ -14,11 +14,6 @@ use crate::state::AppState;
 
 const VERSION: &str = "1.2.0";
 
-/// Stub error helper shared across command modules.
-pub fn not_impl(name: &str) -> Result<Value, String> {
-    Err(format!("{name}: not implemented in scaffold"))
-}
-
 #[tauri::command]
 pub fn get_version() -> String {
     VERSION.into()

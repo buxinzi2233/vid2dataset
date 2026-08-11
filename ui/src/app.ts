@@ -2,14 +2,15 @@
 
 import { renderInspector } from "./components/Inspector";
 import { renderSwitch } from "./components/Switch";
-import { renderSourceView } from "./views/SourceView";
+import { renderModal, showModal } from "./components/Modal";
+import { renderButton } from "./components/Button";import { renderSourceView } from "./views/SourceView";
 import { renderParamsView } from "./views/ParamsView";
 import { renderCaptionView } from "./views/CaptionView";
 import { renderRosterView } from "./views/RosterView";
 import { renderExecuteView } from "./views/ExecuteView";
 import { applyHead } from "./theme/theme";
 import { applyTokenVars, SHELL } from "./theme/tokens";
-import { gpuDetect, gpuStatus } from "./api/ipc";
+import { checkUpdateInfo, gpuDetect, gpuDownload, gpuStatus, installUpdate } from "./api/ipc";
 import { Store } from "./state/store";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string): HTMLElementTagNameMap[K] {
@@ -40,9 +41,17 @@ function buildTopBar(): HTMLElement {
       gpuStatusText.textContent = "GPU — detecting…";
       try {
         const [hw, st] = await Promise.all([gpuDetect(), gpuStatus()]);
-        gpuStatusText.textContent = st.available
-          ? `GPU — ${hw.gpu_name || hw.vendor} (runtime ready)`
-          : `GPU — ${hw.gpu_name || hw.vendor} (runtime not downloaded)`;
+        if (st.available) {
+          gpuStatusText.textContent = `GPU — ${hw.gpu_name || hw.vendor} (runtime ready)`;
+        } else {
+          gpuStatusText.textContent = `GPU — ${hw.gpu_name || hw.vendor} (downloading…)`;
+          try {
+            await gpuDownload();
+            gpuStatusText.textContent = `GPU — ${hw.gpu_name || hw.vendor} (download started)`;
+          } catch (e2) {
+            gpuStatusText.textContent = `GPU — download error: ${String(e2)}`;
+          }
+        }
       } catch (e) {
         gpuStatusText.textContent = `GPU — error: ${String(e)}`;
       }
@@ -64,7 +73,7 @@ function buildTopBar(): HTMLElement {
   return bar;
 }
 
-function buildRail(): HTMLElement {
+function buildRail(onAbout: () => void): HTMLElement {
   const rail = el("aside", "viewrail");
   const abbr = el("div", "abbr");
   abbr.textContent = "RL-EXTRACT-OS // V1.2.0";
@@ -82,10 +91,52 @@ function buildRail(): HTMLElement {
   });
 
   const foot = el("div", "view-foot");
-  foot.textContent = "SESSION — · STANDBY";
+  const footLine = el("div", "");
+  footLine.textContent = "SESSION — · STANDBY";
+  const aboutBtn = renderButton({ label: "ABOUT", variant: "ghost", onClick: onAbout });
+  foot.append(footLine, aboutBtn);
 
   rail.append(abbr, label, nav, foot);
   return rail;
+}
+
+function buildAboutModal(onClose: () => void): HTMLElement {
+  const note = el("div", "validate-status");
+  const checkBtn = renderButton({
+    label: "CHECK UPDATE",
+    variant: "orange",
+    onClick: async () => {
+      note.textContent = "Checking…";
+      try {
+        const info = await checkUpdateInfo();
+        note.textContent = info.available
+          ? `Update available: v${info.version ?? "?"}`
+          : "You have the latest version";
+      } catch (e) {
+        note.textContent = `Update check error: ${String(e)}`;
+      }
+    },
+  });
+  const installBtn = renderButton({
+    label: "INSTALL",
+    variant: "fill",
+    onClick: async () => {
+      note.textContent = "Installing…";
+      try {
+        const res = await installUpdate();
+        note.textContent = res.installed ? "Update staged — restart to apply" : `Not installed: ${res.reason ?? "?"}`;
+      } catch (e) {
+        note.textContent = `Install error: ${String(e)}`;
+      }
+    },
+  });
+  const actions = el("div", "about-actions");
+  actions.append(checkBtn, installBtn);
+  const title = el("div", "i-title");
+  title.textContent = "vid2dataset V1.2.0";
+  const body = el("div", "");
+  body.append(title, actions, note);
+  return renderModal({ title: "ABOUT", tag: "RL-EXTRACT-OS", width: 420, body: [body], onClose });
 }
 
 function buildViewport(store: Store): HTMLElement {
@@ -107,9 +158,12 @@ export function renderApp(root: HTMLElement): void {
   const store = new Store();
   void store.init();
 
+  const aboutModal = buildAboutModal(() => showModal(aboutModal, false));
+  document.body.append(aboutModal);
+
   const app = el("div", "app");
   const work = el("div", "work");
-  work.append(buildRail(), buildViewport(store), renderInspector({}));
+  work.append(buildRail(() => showModal(aboutModal, true)), buildViewport(store), renderInspector({}));
   app.append(buildTopBar(), work);
 
   root.style.width = `${SHELL.designW}px`;

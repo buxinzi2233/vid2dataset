@@ -111,12 +111,6 @@ def test_unknown_method_rejected(proc) -> None:
     assert resp["error"]["code"] == "VALIDATION"
 
 
-def test_stub_method_returns_not_implemented(proc) -> None:
-    resp = _exchange(proc, [{"id": 4, "method": "gpu.download", "params": {}}])[0]
-    assert resp["ok"] is False
-    assert resp["error"]["code"] == "NotImplemented"
-
-
 def test_extract_run_without_config_is_rejected(proc) -> None:
     resp = _exchange(proc, [{"id": 5, "method": "extract.run", "params": {}}])[0]
     assert resp["ok"] is False
@@ -387,3 +381,69 @@ def test_gpu_status_returns_runtime_state(proc) -> None:
     assert isinstance(result["cache_dir"], str)
     assert isinstance(result["size_mb"], float)
 
+
+
+# ── gpu.download / update / advanced ─────────────────────────────────────
+
+
+def test_gpu_download_starts_immediately(proc) -> None:
+    """gpu.download answers fast with `started`; actual download runs async."""
+    resp = _exchange(proc, [{"id": 92, "method": "gpu.download", "params": {}}])[0]
+    assert resp["ok"] is True
+    assert resp["result"] == {"started": True}
+
+
+def test_update_check_returns_shape(proc) -> None:
+    resp = _exchange(proc, [{"id": 93, "method": "update.check", "params": {}}])[0]
+    assert resp["ok"] is True
+    result = resp["result"]
+    assert isinstance(result["available"], bool)
+
+
+def test_update_install_dev_mode_reports_not_exe(proc) -> None:
+    resp = _exchange(proc, [{"id": 94, "method": "update.install", "params": {}}])[0]
+    assert resp["ok"] is True
+    result = resp["result"]
+    assert result["installed"] is False
+    assert result["reason"] in ("no-release", "up-to-date", "not-exe")
+
+
+def test_advanced_open_returns_metadata(proc, tmp_path) -> None:
+    video = tmp_path / "clip.mp4"
+    _write_video(video, frames=45)
+    resp = _exchange(proc, [{"id": 95, "method": "advanced.open",
+                             "params": {"path": str(video)}}])[0]
+    assert resp["ok"] is True
+    meta = resp["result"]
+    assert meta["path"] == str(video)
+    assert meta["frame_count"] >= 45
+
+
+def test_advanced_seek_returns_jpeg_b64(proc, tmp_path) -> None:
+    video = tmp_path / "clip.mp4"
+    _write_video(video, frames=45)
+    resp = _exchange(proc, [{"id": 96, "method": "advanced.seek",
+                             "params": {"path": str(video), "frame": 20}}])[0]
+    assert resp["ok"] is True
+    import base64
+    raw = base64.b64decode(resp["result"]["frame_b64"])
+    assert raw[:3] == b"\xff\xd8\xff"  # JPEG magic
+
+
+def test_advanced_capture_writes_frame(proc, tmp_path) -> None:
+    video = tmp_path / "clip.mp4"
+    _write_video(video, frames=45)
+    cfg = _minimal_config(video, tmp_path / "out")
+    resp = _exchange(proc, [{"id": 97, "method": "advanced.capture",
+                             "params": {"path": str(video), "frame": 10,
+                                        "config": cfg}}])[0]
+    assert resp["ok"] is True
+    out = resp["result"]["out_path"]
+    assert Path(out).exists()
+
+
+def test_advanced_segments_acknowledged(proc) -> None:
+    resp = _exchange(proc, [{"id": 98, "method": "advanced.segments",
+                             "params": {"segments": {"clip.mp4": [[10.0, 20.0]]}}}])[0]
+    assert resp["ok"] is True
+    assert resp["result"] == {"saved": True}
