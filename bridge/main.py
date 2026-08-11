@@ -174,6 +174,34 @@ def _tagger_download(params: dict) -> dict:
     return {"started": True}
 
 
+def _gpu_detect(_params: dict) -> dict:
+    from vid2dataset.gpu_runtime import detect_gpu
+
+    hw = detect_gpu()
+    return {
+        "vendor": hw.vendor,
+        "gpu_name": hw.gpu_name,
+        "arch": hw.arch,
+        "compute_cap": hw.compute_cap,
+        "os_name": hw.os_name,
+        "os_arch": hw.os_arch,
+    }
+
+
+def _gpu_status(_params: dict) -> dict:
+    from vid2dataset.gpu_runtime import runtime_status
+
+    st = runtime_status()
+    return {
+        "available": st.available,
+        "cached": st.cached,
+        "version": st.version,
+        "cache_dir": str(st.cache_dir),
+        "size_mb": st.size_mb,
+        "cuda_tag": st.cuda_tag,
+    }
+
+
 METHODS: dict[str, Callable[[dict], object]] = {
     "config.defaults": _config_defaults,
     "config.validate": lambda p: _not_impl("config.validate"),
@@ -186,8 +214,8 @@ METHODS: dict[str, Callable[[dict], object]] = {
     "tagger.status": _tagger_status,
     "tagger.download": _tagger_download,
     "tagger.run": lambda p: _not_impl("tagger.run"),
-    "gpu.detect": lambda p: _not_impl("gpu.detect"),
-    "gpu.status": lambda p: _not_impl("gpu.status"),
+    "gpu.detect": _gpu_detect,
+    "gpu.status": _gpu_status,
     "gpu.download": lambda p: _not_impl("gpu.download"),
     "update.check": lambda p: _not_impl("update.check"),
     "update.install": lambda p: _not_impl("update.install"),

@@ -48,3 +48,29 @@ export function cancelRun(): Promise<void> {
 export function checkUpdate(): Promise<unknown> {
   return invoke("check_update");
 }
+
+export interface HardwareProfile {
+  vendor: string;
+  gpu_name: string;
+  arch: string;
+  compute_cap: number;
+  os_name: string;
+  os_arch: string;
+}
+
+export interface RuntimeStatus {
+  available: boolean;
+  cached: boolean;
+  version: string | null;
+  cache_dir: string;
+  size_mb: number;
+  cuda_tag: string | null;
+}
+
+export function gpuDetect(): Promise<HardwareProfile> {
+  return invoke("gpu_detect");
+}
+
+export function gpuStatus(): Promise<RuntimeStatus> {
+  return invoke("gpu_status");
+}

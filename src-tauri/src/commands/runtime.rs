@@ -52,13 +52,25 @@ pub fn tagger_download(args: ModelArgs, state: State<'_, AppState>) -> Result<Va
 }
 
 #[tauri::command]
-pub fn gpu_detect() -> Result<Value, String> {
-    not_impl("gpu_detect")
+pub fn gpu_detect(state: State<'_, AppState>) -> Result<Value, String> {
+    let result = state.bridge.lock().unwrap().request("gpu.detect", json!({}));
+    if result.ok {
+        Ok(result.result)
+    } else {
+        let e = result.error.unwrap_or_default();
+        Err(format!("{}: {}", e.code, e.message))
+    }
 }
 
 #[tauri::command]
-pub fn gpu_status() -> Result<Value, String> {
-    not_impl("gpu_status")
+pub fn gpu_status(state: State<'_, AppState>) -> Result<Value, String> {
+    let result = state.bridge.lock().unwrap().request("gpu.status", json!({}));
+    if result.ok {
+        Ok(result.result)
+    } else {
+        let e = result.error.unwrap_or_default();
+        Err(format!("{}: {}", e.code, e.message))
+    }
 }
 
 #[tauri::command]

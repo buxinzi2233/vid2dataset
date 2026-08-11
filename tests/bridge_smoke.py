@@ -309,3 +309,27 @@ def test_tagger_download_starts_immediately(proc) -> None:
     assert resp["ok"] is True
     assert resp["result"] == {"started": True}
 
+
+# ── gpu.detect / gpu.status ─────────────────────────────────────────────
+
+
+def test_gpu_detect_returns_profile(proc) -> None:
+    resp = _exchange(proc, [{"id": 90, "method": "gpu.detect", "params": {}}])[0]
+    assert resp["ok"] is True
+    result = resp["result"]
+    assert result["vendor"] in ("NVIDIA", "AMD", "Intel", "Apple", "Unknown")
+    assert isinstance(result["gpu_name"], str)
+    assert isinstance(result["compute_cap"], float)
+    assert result["os_name"] in ("windows", "linux", "macos")
+    assert result["os_arch"] in ("x86_64", "arm64")
+
+
+def test_gpu_status_returns_runtime_state(proc) -> None:
+    resp = _exchange(proc, [{"id": 91, "method": "gpu.status", "params": {}}])[0]
+    assert resp["ok"] is True
+    result = resp["result"]
+    assert isinstance(result["available"], bool)
+    assert isinstance(result["cached"], bool)
+    assert isinstance(result["cache_dir"], str)
+    assert isinstance(result["size_mb"], float)
+

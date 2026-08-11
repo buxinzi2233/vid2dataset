@@ -68,8 +68,8 @@ stdout 只写协议帧；Python 日志输出到 **stderr**（Rust 单独线程�
 | `tagger.status` | `{"model": str}` | `{"available": bool, "size_mb": int}` | ✅ 真接通 |
 | `tagger.download` | `{"model": str}` | `{"started": true}`（事件流 `download.progress` → `download.done`） | ✅ 真接通 |
 | `tagger.run` | `{...TagConfig...}` | `TagSummary` | stub |
-| `gpu.detect` | `{}` | `HardwareProfile` | stub |
-| `gpu.status` | `{}` | `RuntimeStatus` | stub |
+| `gpu.detect` | `{}` | `HardwareProfile` | ✅ 真接通 |
+| `gpu.status` | `{}` | `RuntimeStatus` | ✅ 真接通 |
 | `gpu.download` | `{}` | `null`（事件流 `download.progress`） | stub |
 | `update.check` | `{}` | `ReleaseInfo | null`（null=已最新） | stub |
 | `update.install` | `{}` | `null` | stub |

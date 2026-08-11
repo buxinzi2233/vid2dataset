@@ -25,6 +25,8 @@ body {
 .runbar .id .code { font-family: var(--mono); font-size: 9px; color: var(--accent); letter-spacing: .12em; }
 .runbar .spacer { flex: 1; }
 .runbar .actions { display: flex; gap: 8px; align-items: center; }
+.gpu-wrap { display: flex; align-items: center; gap: 8px; border-right: 1px solid var(--line); padding-right: 12px; }
+.gpu-status { font-family: var(--mono); font-size: 10px; color: var(--grey); white-space: nowrap; }
 
 .btn {
   font-family: var(--mono); font-size: 11px; height: 34px; padding: 0 14px;

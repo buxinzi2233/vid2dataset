@@ -1,6 +1,7 @@
 //! App shell: top bar + left rail + viewport + right inspector.
 
 import { renderInspector } from "./components/Inspector";
+import { renderSwitch } from "./components/Switch";
 import { renderSourceView } from "./views/SourceView";
 import { renderParamsView } from "./views/ParamsView";
 import { renderCaptionView } from "./views/CaptionView";
@@ -8,6 +9,7 @@ import { renderRosterView } from "./views/RosterView";
 import { renderExecuteView } from "./views/ExecuteView";
 import { applyHead } from "./theme/theme";
 import { applyTokenVars, SHELL } from "./theme/tokens";
+import { gpuDetect, gpuStatus } from "./api/ipc";
 import { Store } from "./state/store";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string): HTMLElementTagNameMap[K] {
@@ -26,13 +28,37 @@ function buildTopBar(): HTMLElement {
   id.append(name, code);
 
   const actions = el("div", "actions");
+
+  // GPU acceleration switch with live hardware detection result.
+  const gpuWrap = el("div", "gpu-wrap");
+  const gpuStatusText = el("span", "gpu-status");
+  gpuStatusText.textContent = "GPU —";
+  const gpuSwitch = renderSwitch({ label: "GPU", checked: false });
+  gpuSwitch.addEventListener("click", async () => {
+    const on = gpuSwitch.classList.contains("on");
+    if (!on) {
+      gpuStatusText.textContent = "GPU — detecting…";
+      try {
+        const [hw, st] = await Promise.all([gpuDetect(), gpuStatus()]);
+        gpuStatusText.textContent = st.available
+          ? `GPU — ${hw.gpu_name || hw.vendor} (runtime ready)`
+          : `GPU — ${hw.gpu_name || hw.vendor} (runtime not downloaded)`;
+      } catch (e) {
+        gpuStatusText.textContent = `GPU — error: ${String(e)}`;
+      }
+    } else {
+      gpuStatusText.textContent = "GPU —";
+    }
+  });
+  gpuWrap.append(gpuSwitch, gpuStatusText);
+
   const lang = el("button", "btn");
   lang.textContent = "中文 / EN";
   const cancel = el("button", "btn danger");
   cancel.textContent = "CANCEL";
   const run = el("button", "btn fill");
   run.textContent = "EXTRACT";
-  actions.append(lang, cancel, run);
+  actions.append(gpuWrap, lang, cancel, run);
 
   bar.append(id, el("div", "spacer"), actions);
   return bar;
