@@ -1,0 +1,100 @@
+//! config domain commands: version, language, prefs, presets, folder browse.
+//!
+//! `list_presets` and `config_defaults` forward to the live sidecar methods;
+//! the rest are stubs with typed signatures (see `docs/api-contract.md` §3).
+
+#![allow(dead_code)] // stub arg fields become live when the feature tasks land.
+
+use serde::Deserialize;
+use serde_json::{json, Value};
+use tauri::{AppHandle, State};
+
+use crate::bridge::protocol::ErrorInfo;
+use crate::state::AppState;
+
+const VERSION: &str = "1.2.0";
+
+/// Stub error helper shared across command modules.
+pub fn not_impl(name: &str) -> Result<Value, String> {
+    Err(format!("{name}: not implemented in scaffold"))
+}
+
+#[tauri::command]
+pub fn get_version() -> String {
+    VERSION.into()
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetLangArgs {
+    pub lang: String,
+}
+
+#[tauri::command]
+pub fn get_lang() -> Result<String, String> {
+    Err("get_lang: not implemented in scaffold".into())
+}
+
+#[tauri::command]
+pub fn set_lang(args: SetLangArgs) -> Result<(), String> {
+    let _ = args;
+    Err("set_lang: not implemented in scaffold".into())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetPrefsArgs {
+    pub prefs: Value,
+}
+
+#[tauri::command]
+pub fn get_prefs() -> Result<Value, String> {
+    Err("get_prefs: not implemented in scaffold".into())
+}
+
+#[tauri::command]
+pub fn set_prefs(args: SetPrefsArgs) -> Result<(), String> {
+    let _ = args;
+    Err("set_prefs: not implemented in scaffold".into())
+}
+
+/// List built-in presets from the live sidecar (`presets.list`).
+#[tauri::command]
+pub fn list_presets(state: State<'_, AppState>) -> Result<Value, String> {
+    let result = state.bridge.lock().unwrap().request("presets.list", json!({}));
+    if result.ok {
+        Ok(result.result)
+    } else {
+        let e = result.error.unwrap_or(ErrorInfo { code: "ERR".into(), message: "".into() });
+        Err(format!("{}: {}", e.code, e.message))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadPresetArgs {
+    pub name: String,
+}
+
+#[tauri::command]
+pub fn load_preset(args: LoadPresetArgs) -> Result<Value, String> {
+    not_impl(&format!("load_preset({})", args.name))
+}
+
+#[tauri::command]
+pub fn config_defaults(state: State<'_, AppState>) -> Result<Value, String> {
+    let result = state.bridge.lock().unwrap().request("config.defaults", json!({}));
+    if result.ok {
+        Ok(result.result)
+    } else {
+        let e = result.error.unwrap_or(ErrorInfo { code: "ERR".into(), message: "".into() });
+        Err(format!("{}: {}", e.code, e.message))
+    }
+}
+
+/// Open a native folder picker; returns the chosen path or null when cancelled.
+#[tauri::command]
+pub async fn browse_folder(_app: AppHandle) -> Result<Option<String>, String> {
+    // Scaffold: dialog plugin wiring lands with the config feature task.
+    Err("browse_folder: not implemented in scaffold".into())
+}
