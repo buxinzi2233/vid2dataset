@@ -16,12 +16,24 @@ loop can keep consuming stdin (e.g. extract.cancel) and pushing events.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 import threading
 from collections.abc import Callable
 
 from vid2dataset.config import ExtractConfig
+from vid2dataset.extractor import run_pipeline
 from vid2dataset.presets import list_presets
+
+log = logging.getLogger("bridge")
+
+# ── Extract runtime state ───────────────────────────────────────────────
+# Shared between extract.run (worker) and extract.cancel (reader thread).
+_cancel_event: threading.Event | None = None
+_run_lock = threading.Lock()
+
+
+# ── Method handlers ─────────────────────────────────────────────────────
 
 
 def _not_impl(name: str) -> None:
@@ -36,6 +48,62 @@ def _config_defaults(_params: dict) -> dict:
     return ExtractConfig.model_json_schema()["properties"]
 
 
+class _LogHandler(logging.Handler):
+    """Forward Python logging lines from the pipeline as extract.log events."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        _write({"event": "extract.log", "data": {"line": self.format(record)}})
+
+
+def _extract_run(params: dict) -> dict:
+    """Start extraction on a worker thread; returns immediately.
+
+    The worker runs ``run_pipeline``, streaming ``extract.progress`` /
+    ``extract.log`` events, and finishes by emitting ``extract.done`` with the
+    summary. This method itself is synchronous-only in the registry sense: it
+    spawns the worker and returns ``{"started": true}`` so the caller's request
+    resolves fast, while the actual completion arrives via ``extract.done``.
+    """
+    cfg = ExtractConfig(**params["config"])
+
+    # Only one run at a time; reject a concurrent start.
+    if not _run_lock.acquire(blocking=False):
+        raise RuntimeError("an extraction is already running")
+
+    cancel = threading.Event()
+    global _cancel_event
+    _cancel_event = cancel
+
+    def _worker() -> None:
+        try:
+            def progress_cb(stage: str, current: int, total: int) -> None:
+                _write({"event": "extract.progress",
+                        "data": {"stage": stage, "current": current, "total": total}})
+            handler = _LogHandler()
+            handler.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
+            logging.getLogger().addHandler(handler)
+            try:
+                result = run_pipeline(cfg, progress=progress_cb, cancel_event=cancel)
+            finally:
+                logging.getLogger().removeHandler(handler)
+            _write({"event": "extract.done", "data": result.to_summary_dict()})
+        except Exception as e:  # noqa: BLE001 - surfaced as an event
+            _write({"event": "extract.error", "data": {"message": str(e)}})
+        finally:
+            _run_lock.release()
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return {"started": True}
+
+
+def _extract_cancel(_params: dict) -> dict:
+    global _cancel_event
+    ev = _cancel_event
+    if ev is not None:
+        ev.set()
+    return {"cancelled": ev is not None}
+
+
 METHODS: dict[str, Callable[[dict], object]] = {
     "config.defaults": _config_defaults,
     "config.validate": lambda p: _not_impl("config.validate"),
@@ -43,8 +111,8 @@ METHODS: dict[str, Callable[[dict], object]] = {
     "presets.load": lambda p: _not_impl("presets.load"),
     "source.discover": lambda p: _not_impl("source.discover"),
     "source.probe": lambda p: _not_impl("source.probe"),
-    "extract.run": lambda p: _not_impl("extract.run"),
-    "extract.cancel": lambda p: _not_impl("extract.cancel"),
+    "extract.run": _extract_run,
+    "extract.cancel": _extract_cancel,
     "tagger.status": lambda p: _not_impl("tagger.status"),
     "tagger.download": lambda p: _not_impl("tagger.download"),
     "tagger.run": lambda p: _not_impl("tagger.run"),
@@ -58,6 +126,9 @@ METHODS: dict[str, Callable[[dict], object]] = {
     "advanced.capture": lambda p: _not_impl("advanced.capture"),
     "advanced.segments": lambda p: _not_impl("advanced.segments"),
 }
+
+
+# ── Dispatch ────────────────────────────────────────────────────────────
 
 
 def _write(obj: dict) -> None:

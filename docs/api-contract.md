@@ -63,8 +63,8 @@ stdout 只写协议帧；Python 日志输出到 **stderr**（Rust 单独线程�
 | `presets.load` | `{"name": str}` | `{...preset overrides...}` | stub |
 | `source.discover` | `{"path": str}` | `[video path string]` | stub |
 | `source.probe` | `{"path": str}` | `VideoMeta` | stub |
-| `extract.run` | `{"config": {...}}` | `PipelineResult`（事件流 `extract.progress/log`） | stub |
-| `extract.cancel` | `{}` | `null` | stub |
+| `extract.run` | `{"config": {...}}` | `{"started": true}`（事件流 `extract.progress/log/done/error`） | ✅ 真接通 |
+| `extract.cancel` | `{}` | `{"cancelled": bool}` | ✅ 真接通 |
 | `tagger.status` | `{"model": str}` | `{"available": bool, "size_mb": int}` | stub |
 | `tagger.download` | `{"model": str}` | `null`（事件流 `download.progress`） | stub |
 | `tagger.run` | `{...TagConfig...}` | `TagSummary` | stub |
@@ -128,10 +128,10 @@ interface RuntimeStatus { available: boolean; cached: boolean; version: string |
 
 | 事件名 | payload | 说明 |
 |---|---|---|
-| `extract.progress` | `{ stage, current, total }` | `stage`: `video` / `tag:tagging` / `tag:<pkg>` 下载 |
-| `extract.log` | `{ line }` | 控制台一行 |
-| `extract.done` | `{ result: PipelineResult }` | 正常完成 |
-| `extract.error` | `{ message }` | 失败 |
+| `extract.progress` | `{ stage, current, total }` | `stage`: `video` / `decode` / `tag:tagging` / `tag:<pkg>` 下载 |
+| `extract.log` | `{ line }` | 控制台一行（来自 Python logging） |
+| `extract.done` | `{ result: PipelineResult }` | 提取完成（`PipelineResult.to_summary_dict()`） |
+| `extract.error` | `{ message }` | 提取失败 |
 | `download.progress` | `{ pkg, current, total }` | GPU/tagger 模型下载（bytes） |
 | `download.done` | `{ kind }` | `gpu` / `tagger` 下载完成 |
 

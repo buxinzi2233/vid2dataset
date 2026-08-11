@@ -1,9 +1,9 @@
 //! extract domain commands: source discovery, probe, run, cancel, advanced.
 //!
-//! All are typed stubs in this scaffold; the sidecar methods they will forward
-//! to are listed in `docs/api-contract.md` §2/§3.
+//! `start_run` / `cancel_run` forward to the live sidecar. The rest are typed
+//! stubs (sidecar methods listed in `docs/api-contract.md` §2/§3).
 
-#![allow(dead_code)] // stub arg fields become live when the feature tasks land.
+#![allow(dead_code)] // remaining stub arg fields become live with feature tasks.
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -34,17 +34,33 @@ pub struct StartRunArgs {
     pub config: Value,
 }
 
-/// Fire-and-forget: returns immediately; progress flows via `extract.*` events.
+/// Fire-and-forget: forwards to sidecar `extract.run`, which answers fast with
+/// `{"started": true}` and streams `extract.progress/log/done` events.
 #[tauri::command]
-pub fn start_run(args: StartRunArgs, state: State<'_, AppState>) -> Result<(), String> {
-    let _ = args;
-    let _ = state;
-    Err("start_run: not implemented in scaffold".into())
+pub fn start_run(args: StartRunArgs, state: State<'_, AppState>) -> Result<Value, String> {
+    let result = state
+        .bridge
+        .lock()
+        .unwrap()
+        .request("extract.run", json!({ "config": args.config }));
+    if result.ok {
+        Ok(result.result)
+    } else {
+        let e = result.error.unwrap_or_default();
+        Err(format!("{}: {}", e.code, e.message))
+    }
 }
 
+/// Ask the sidecar to set its extraction cancel event.
 #[tauri::command]
-pub fn cancel_run(_state: State<'_, AppState>) -> Result<(), String> {
-    Err("cancel_run: not implemented in scaffold".into())
+pub fn cancel_run(state: State<'_, AppState>) -> Result<Value, String> {
+    let result = state.bridge.lock().unwrap().request("extract.cancel", json!({}));
+    if result.ok {
+        Ok(result.result)
+    } else {
+        let e = result.error.unwrap_or_default();
+        Err(format!("{}: {}", e.code, e.message))
+    }
 }
 
 #[tauri::command]
@@ -74,6 +90,5 @@ pub struct AdvCaptureArgs {
 
 #[tauri::command]
 pub fn adv_capture(args: AdvCaptureArgs) -> Result<Value, String> {
-    let _ = json!({});
     not_impl(&format!("adv_capture({}, {})", args.path, args.frame))
 }

@@ -28,7 +28,7 @@ pub struct Response {
 }
 
 /// Structured error carried in a failed response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ErrorInfo {
     pub code: String,
     pub message: String,
