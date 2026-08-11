@@ -73,7 +73,7 @@ function buildTopBar(): HTMLElement {
   return bar;
 }
 
-function buildRail(onAbout: () => void): HTMLElement {
+function buildRail(onNav: (key: string) => void, onAbout: () => void): HTMLElement {
   const rail = el("aside", "viewrail");
   const abbr = el("div", "abbr");
   abbr.textContent = "RL-EXTRACT-OS // V1.2.0";
@@ -81,12 +81,14 @@ function buildRail(onAbout: () => void): HTMLElement {
   label.textContent = "TERMINAL VIEWS";
 
   const nav = el("nav", "nav");
+  const keys = ["source", "params", "caption", "roster", "execute"];
   const items = ["SOURCE", "PARAMETERS", "CAPTIONING", "ROSTER", "EXECUTE"];
   items.forEach((title, i) => {
     const b = el("button", i === 0 ? "active" : "");
     const code = el("span", "code");
     code.textContent = String(i + 1).padStart(2, "0");
     b.append(code, document.createTextNode("  " + title));
+    b.addEventListener("click", () => onNav(keys[i]));
     nav.append(b);
   });
 
@@ -163,10 +165,27 @@ export function renderApp(root: HTMLElement): void {
 
   const app = el("div", "app");
   const work = el("div", "work");
-  work.append(buildRail(() => showModal(aboutModal, true)), buildViewport(store), renderInspector({}));
+  const viewport = buildViewport(store);
+  const views = viewport.querySelectorAll<HTMLElement>(".view");
+  const viewByKey: Record<string, HTMLElement> = {};
+  const keys = ["source", "params", "caption", "roster", "execute"];
+  views.forEach((v, i) => (viewByKey[keys[i]] = v));
+
+  const switchView = (key: string): void => {
+    Object.entries(viewByKey).forEach(([k, v]) => v.classList.toggle("active", k === key));
+  };
+
+  const rail = buildRail((key: string) => switchView(key), () => showModal(aboutModal, true));
+  work.append(rail, viewport, renderInspector({}));
   app.append(buildTopBar(), work);
 
   root.style.width = `${SHELL.designW}px`;
   root.style.height = `${SHELL.designH}px`;
   root.append(app);
+
+  // Test hooks (harmless in production): allow driving view switch + store
+  // from the console / headless browser for UI verification.
+  const w = window as unknown as Record<string, unknown>;
+  w.__vid2dataset_switchView = switchView;
+  w.__vid2dataset_store = store;
 }
