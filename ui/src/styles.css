@@ -67,6 +67,11 @@ body {
 .field-row .flabel { font-family: var(--mono); font-size: 11px; color: var(--grey); padding-bottom: 8px; }
 .field-row input { font-family: var(--mono); font-size: 12px; background: transparent; border: 0;
   border-bottom: 1px solid var(--ink); padding: 4px 0 6px; outline: none; color: var(--ink); }
+.source-row { display: grid; grid-template-columns: max-content 1fr auto; align-items: end; gap: 0 14px; margin: 13px 0 0; }
+.source-row .flabel { font-family: var(--mono); font-size: 11px; color: var(--grey); padding-bottom: 8px; }
+.source-row input { font-family: var(--mono); font-size: 12px; background: transparent; border: 0;
+  border-bottom: 1px solid var(--ink); padding: 4px 0 6px; outline: none; color: var(--ink); }
+.source-row .btn { height: 28px; font-size: 10px; }
 .sw { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 11px; user-select: none; }
 .sw .box { width: 15px; height: 15px; border: 1px solid var(--grey); background: var(--field);
   display: inline-flex; align-items: center; justify-content: center; flex: none; }
