@@ -51,6 +51,7 @@ fn main() {
             commands::adv_capture,
             commands::tagger_status,
             commands::tagger_download,
+            commands::tagger_run,
             commands::gpu_detect,
             commands::gpu_status,
             commands::gpu_download,

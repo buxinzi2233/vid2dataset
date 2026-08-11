@@ -67,7 +67,7 @@ stdout 只写协议帧；Python 日志输出到 **stderr**（Rust 单独线程�
 | `extract.cancel` | `{}` | `{"cancelled": bool}` | ✅ 真接通 |
 | `tagger.status` | `{"model": str}` | `{"available": bool, "size_mb": int}` | ✅ 真接通 |
 | `tagger.download` | `{"model": str}` | `{"started": true}`（事件流 `download.progress` → `download.done`） | ✅ 真接通 |
-| `tagger.run` | `{...TagConfig...}` | `TagSummary` | stub |
+| `tagger.run` | `{folder, model_name?, trigger_word?, blacklist?, require?, exclude?, always?, trait_prune_threshold?, general_threshold?, character_threshold?, use_gpu?}` | `{"started": true}`（事件流 `extract.progress`(`tag:tagging`) → `tagger.done`） | ✅ 真接通 |
 | `gpu.detect` | `{}` | `HardwareProfile` | ✅ 真接通 |
 | `gpu.status` | `{}` | `RuntimeStatus` | ✅ 真接通 |
 | `gpu.download` | `{}` | `null`（事件流 `download.progress`） | stub |
@@ -134,6 +134,7 @@ interface RuntimeStatus { available: boolean; cached: boolean; version: string |
 | `extract.error` | `{ message }` | 提取失败 |
 | `download.progress` | `{ pkg, current, total }` | GPU/tagger 模型下载（bytes） |
 | `download.done` | `{ kind, error? }` | `kind`: `gpu` / `tagger`；失败时带 `error` 字符串 |
+| `tagger.done` | `{ tagged, failed, total, cancelled, rejected, pruned_tags, tag_counts, per_image }` 或 `{ error }` | `tagger.run` 完成（TagSummary） |
 
 事件名 = bridge 事件名直接透传（Rust 层不加前缀改写，保持一致）。
 

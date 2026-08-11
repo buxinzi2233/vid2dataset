@@ -112,7 +112,7 @@ def test_unknown_method_rejected(proc) -> None:
 
 
 def test_stub_method_returns_not_implemented(proc) -> None:
-    resp = _exchange(proc, [{"id": 4, "method": "tagger.run", "params": {}}])[0]
+    resp = _exchange(proc, [{"id": 4, "method": "gpu.download", "params": {}}])[0]
     assert resp["ok"] is False
     assert resp["error"]["code"] == "NotImplemented"
 
@@ -325,6 +325,43 @@ def test_tagger_download_starts_immediately(proc) -> None:
                              "params": {"model": "wd-swinv2-tagger-v3"}}])[0]
     assert resp["ok"] is True
     assert resp["result"] == {"started": True}
+
+
+# ── tagger.run ──────────────────────────────────────────────────────────
+
+
+def test_tagger_run_starts_and_completes_empty_folder(proc, tmp_path) -> None:
+    """tagger.run on an image-free folder completes immediately via tagger.done.
+
+    tag_folder returns a TagSummary(total=0) without touching the model, so
+    this exercises the async protocol (started response + done event) without
+    network or a downloaded model.
+    """
+    resp = _exchange(proc, [{"id": 83, "method": "tagger.run",
+                             "params": {"folder": str(tmp_path)}}])[0]
+    assert resp["ok"] is True
+    assert resp["result"] == {"started": True}
+
+    frames = _read_frames_until(proc, lambda f: f.get("event") == "tagger.done",
+                                max_lines=400)
+    done = frames[-1]
+    assert done["event"] == "tagger.done"
+    assert done["data"]["total"] == 0
+    assert done["data"]["tagged"] == 0
+
+
+def test_tagger_run_missing_folder_treated_empty(proc, tmp_path) -> None:
+    # tag_folder treats a missing folder as empty (collect_images -> []), so the
+    # worker still completes with a total=0 TagSummary rather than erroring.
+    resp = _exchange(proc, [{"id": 84, "method": "tagger.run",
+                             "params": {"folder": str(tmp_path / "nope")}}])[0]
+    assert resp["ok"] is True  # fast-start contract
+    assert resp["result"] == {"started": True}
+    frames = _read_frames_until(proc, lambda f: f.get("event") == "tagger.done",
+                                max_lines=400)
+    done = frames[-1]
+    assert done["event"] == "tagger.done"
+    assert done["data"]["total"] == 0
 
 
 # ── gpu.detect / gpu.status ─────────────────────────────────────────────

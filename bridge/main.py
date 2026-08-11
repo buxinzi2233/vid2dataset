@@ -155,6 +155,61 @@ def _tagger_status(params: dict) -> dict:
     return {"available": available, "size_mb": download_size_mb(model)}
 
 
+def _tagger_run(params: dict) -> dict:
+    """Tag a folder of images on a worker thread.
+
+    Returns immediately with ``{"started": true}``. Progress streams via
+    ``extract.progress`` with ``stage="tag:tagging"``; completion via a
+    ``tagger.done`` event carrying the TagSummary.
+    """
+    from vid2dataset.tagger import TagSummary, tag_folder
+
+    folder = params["folder"]
+
+    def progress_cb(stage: str, done: int, total: int) -> None:
+        if stage == "tagging":
+            _write({"event": "extract.progress",
+                    "data": {"stage": "tag:tagging", "current": done, "total": total}})
+        elif total > 0:  # download progress (bytes)
+            _write({"event": "download.progress",
+                    "data": {"pkg": stage, "current": done, "total": total}})
+
+    def _summary_dict(s: TagSummary) -> dict:
+        return {
+            "tagged": s.tagged,
+            "failed": s.failed,
+            "total": s.total,
+            "cancelled": s.cancelled,
+            "rejected": s.rejected,
+            "pruned_tags": s.pruned_tags,
+            "tag_counts": dict(s.tag_counts),
+            "per_image": s.per_image,
+        }
+
+    def _worker() -> None:
+        try:
+            summary = tag_folder(
+                folder,
+                model_name=params.get("model_name", "wd-eva02-large-tagger-v3"),
+                trigger_word=params.get("trigger_word", ""),
+                general_threshold=params.get("general_threshold", 0.35),
+                character_threshold=params.get("character_threshold", 0.85),
+                blacklist=params.get("blacklist", ""),
+                always=params.get("always", ""),
+                trait_prune_threshold=params.get("trait_prune_threshold", 0.0),
+                require=params.get("require", ""),
+                exclude=params.get("exclude", ""),
+                use_gpu=params.get("use_gpu", True),
+                progress_cb=progress_cb,
+            )
+            _write({"event": "tagger.done", "data": _summary_dict(summary)})
+        except Exception as e:  # noqa: BLE001 - surfaced as an event
+            _write({"event": "tagger.done", "data": {"error": str(e)}})
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return {"started": True}
+
+
 def _tagger_download(params: dict) -> dict:
     """Ensure onnxruntime + download the model on a worker thread.
 
@@ -229,7 +284,7 @@ METHODS: dict[str, Callable[[dict], object]] = {
     "extract.cancel": _extract_cancel,
     "tagger.status": _tagger_status,
     "tagger.download": _tagger_download,
-    "tagger.run": lambda p: _not_impl("tagger.run"),
+    "tagger.run": _tagger_run,
     "gpu.detect": _gpu_detect,
     "gpu.status": _gpu_status,
     "gpu.download": lambda p: _not_impl("gpu.download"),

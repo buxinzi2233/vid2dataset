@@ -88,3 +88,21 @@ export function gpuDetect(): Promise<HardwareProfile> {
 export function gpuStatus(): Promise<RuntimeStatus> {
   return invoke("gpu_status");
 }
+
+export interface TaggerRunArgs {
+  folder: string;
+  modelName?: string;
+  triggerWord?: string;
+  blacklist?: string;
+  require?: string;
+  exclude?: string;
+  always?: string;
+  traitPruneThreshold?: number;
+  generalThreshold?: number;
+  characterThreshold?: number;
+  useGpu?: boolean;
+}
+
+export function runTagger(args: TaggerRunArgs): Promise<{ started: boolean }> {
+  return invoke("tagger_run", { ...args });
+}
