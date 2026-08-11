@@ -82,6 +82,12 @@ body {
 .run-strip .btn-side { display: flex; flex-direction: column; gap: 6px; width: 120px; }
 .run-strip .btn-side .btn { flex: none; font-size: 11px; height: 26px; }
 .cap-fields { display: flex; flex-direction: column; gap: 10px; }
+.cap-toggle { display: flex; align-items: center; gap: 10px; }
+.cap-field { display: flex; align-items: center; gap: 8px; }
+.cap-field .clabel { font-family: var(--mono); font-size: 10px; color: var(--grey); }
+.cap-field input { font-family: var(--mono); font-size: 11px; color: var(--ink); background: var(--field);
+  border: 1px solid var(--line); padding: 5px 8px; outline: none; }
+.cap-field input:focus { border-color: var(--accent); }
 
 /* Params */
 .preset-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
