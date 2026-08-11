@@ -257,3 +257,36 @@ def test_source_probe_missing_file_errors(proc, tmp_path) -> None:
     assert resp["ok"] is False
     assert resp["error"]["code"] != "NotImplemented"
 
+
+# ── tagger.status / tagger.download ─────────────────────────────────────
+
+
+def test_tagger_status_returns_model_info(proc) -> None:
+    resp = _exchange(proc, [{"id": 80, "method": "tagger.status",
+                             "params": {"model": "wd-eva02-large-tagger-v3"}}])[0]
+    assert resp["ok"] is True
+    result = resp["result"]
+    assert isinstance(result["available"], bool)
+    assert result["size_mb"] > 0
+
+
+def test_tagger_download_rejects_unknown_model(proc) -> None:
+    resp = _exchange(proc, [{"id": 81, "method": "tagger.download",
+                             "params": {"model": "does-not-exist"}}])[0]
+    assert resp["ok"] is False
+    assert resp["error"]["code"] == "ValueError"
+
+
+def test_tagger_download_starts_immediately(proc) -> None:
+    """tagger.download answers fast with `started` and streams download events.
+
+    We deliberately do NOT wait for `download.done` here: with a valid model the
+    worker downloads a multi-hundred-MB model over the network, which must not
+    run in CI. The async event protocol is already covered by the extract.run
+    integration tests; this test only pins the fast-start contract.
+    """
+    resp = _exchange(proc, [{"id": 82, "method": "tagger.download",
+                             "params": {"model": "wd-swinv2-tagger-v3"}}])[0]
+    assert resp["ok"] is True
+    assert resp["result"] == {"started": True}
+

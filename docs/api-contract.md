@@ -65,8 +65,8 @@ stdout 只写协议帧；Python 日志输出到 **stderr**（Rust 单独线程�
 | `source.probe` | `{"path": str}` | `VideoMeta` | ✅ 真接通 |
 | `extract.run` | `{"config": {...}}` | `{"started": true}`（事件流 `extract.progress/log/done/error`） | ✅ 真接通 |
 | `extract.cancel` | `{}` | `{"cancelled": bool}` | ✅ 真接通 |
-| `tagger.status` | `{"model": str}` | `{"available": bool, "size_mb": int}` | stub |
-| `tagger.download` | `{"model": str}` | `null`（事件流 `download.progress`） | stub |
+| `tagger.status` | `{"model": str}` | `{"available": bool, "size_mb": int}` | ✅ 真接通 |
+| `tagger.download` | `{"model": str}` | `{"started": true}`（事件流 `download.progress` → `download.done`） | ✅ 真接通 |
 | `tagger.run` | `{...TagConfig...}` | `TagSummary` | stub |
 | `gpu.detect` | `{}` | `HardwareProfile` | stub |
 | `gpu.status` | `{}` | `RuntimeStatus` | stub |
@@ -133,7 +133,7 @@ interface RuntimeStatus { available: boolean; cached: boolean; version: string |
 | `extract.done` | `{ result: PipelineResult }` | 提取完成（`PipelineResult.to_summary_dict()`） |
 | `extract.error` | `{ message }` | 提取失败 |
 | `download.progress` | `{ pkg, current, total }` | GPU/tagger 模型下载（bytes） |
-| `download.done` | `{ kind }` | `gpu` / `tagger` 下载完成 |
+| `download.done` | `{ kind, error? }` | `kind`: `gpu` / `tagger`；失败时带 `error` 字符串 |
 
 事件名 = bridge 事件名直接透传（Rust 层不加前缀改写，保持一致）。
 

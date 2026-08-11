@@ -125,6 +125,49 @@ def _extract_cancel(_params: dict) -> dict:
     return {"cancelled": ev is not None}
 
 
+def _tagger_status(params: dict) -> dict:
+    from vid2dataset.tagger import download_size_mb, model_status
+
+    model = params["model"]
+    available, _dir = model_status(model)
+    return {"available": available, "size_mb": download_size_mb(model)}
+
+
+def _tagger_download(params: dict) -> dict:
+    """Ensure onnxruntime + download the model on a worker thread.
+
+    Returns immediately with ``{"started": true}``. Progress streams via
+    ``download.progress`` ({pkg, current, total}); completion via
+    ``download.done`` ({kind: "tagger", error?}).
+    """
+    from vid2dataset.tagger import TAGGER_MODELS
+
+    model = params["model"]
+    if model not in TAGGER_MODELS:
+        raise ValueError(f"Unknown tagger model: {model}. Available: {list(TAGGER_MODELS)}")
+
+    def progress_cb(pkg: str, done: int, total: int) -> None:
+        _write({"event": "download.progress",
+                "data": {"pkg": pkg, "current": done, "total": total}})
+
+    def _worker() -> None:
+        try:
+            from vid2dataset import tagger_runtime
+            from vid2dataset.tagger import download_model, model_status
+
+            tagger_runtime.ensure_onnxruntime(progress=progress_cb)
+            ok, _ = model_status(model)
+            if not ok:
+                download_model(model, progress=progress_cb)
+            _write({"event": "download.done", "data": {"kind": "tagger"}})
+        except Exception as e:  # noqa: BLE001 - surfaced as an event
+            _write({"event": "download.done",
+                    "data": {"kind": "tagger", "error": str(e)}})
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return {"started": True}
+
+
 METHODS: dict[str, Callable[[dict], object]] = {
     "config.defaults": _config_defaults,
     "config.validate": lambda p: _not_impl("config.validate"),
@@ -134,8 +177,8 @@ METHODS: dict[str, Callable[[dict], object]] = {
     "source.probe": _source_probe,
     "extract.run": _extract_run,
     "extract.cancel": _extract_cancel,
-    "tagger.status": lambda p: _not_impl("tagger.status"),
-    "tagger.download": lambda p: _not_impl("tagger.download"),
+    "tagger.status": _tagger_status,
+    "tagger.download": _tagger_download,
     "tagger.run": lambda p: _not_impl("tagger.run"),
     "gpu.detect": lambda p: _not_impl("gpu.detect"),
     "gpu.status": lambda p: _not_impl("gpu.status"),

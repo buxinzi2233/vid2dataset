@@ -4,12 +4,14 @@
 //! share the same request/event shape (`download.progress`), so they live in
 //! one module instead of two near-empty files.
 
-#![allow(dead_code)] // stub arg fields become live when the feature tasks land.
+#![allow(dead_code)] // GPU stubs become live with the GPU feature task.
 
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
+use tauri::State;
 
 use crate::commands::config::not_impl;
+use crate::state::AppState;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,13 +20,35 @@ pub struct ModelArgs {
 }
 
 #[tauri::command]
-pub fn tagger_status(args: ModelArgs) -> Result<Value, String> {
-    not_impl(&format!("tagger_status({})", args.model))
+pub fn tagger_status(args: ModelArgs, state: State<'_, AppState>) -> Result<Value, String> {
+    let result = state
+        .bridge
+        .lock()
+        .unwrap()
+        .request("tagger.status", json!({ "model": args.model }));
+    if result.ok {
+        Ok(result.result)
+    } else {
+        let e = result.error.unwrap_or_default();
+        Err(format!("{}: {}", e.code, e.message))
+    }
 }
 
+/// Fire-and-forget: sidecar answers fast with `{"started": true}` and streams
+/// `download.progress` / `download.done` events.
 #[tauri::command]
-pub fn tagger_download(args: ModelArgs) -> Result<Value, String> {
-    not_impl(&format!("tagger_download({})", args.model))
+pub fn tagger_download(args: ModelArgs, state: State<'_, AppState>) -> Result<Value, String> {
+    let result = state
+        .bridge
+        .lock()
+        .unwrap()
+        .request("tagger.download", json!({ "model": args.model }));
+    if result.ok {
+        Ok(result.result)
+    } else {
+        let e = result.error.unwrap_or_default();
+        Err(format!("{}: {}", e.code, e.message))
+    }
 }
 
 #[tauri::command]
