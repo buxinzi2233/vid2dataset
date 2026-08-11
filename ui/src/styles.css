@@ -89,6 +89,17 @@ body {
   border: 1px solid var(--line); padding: 5px 8px; outline: none; }
 .cap-field input:focus { border-color: var(--accent); }
 
+/* Execute run panel */
+.scan { height: 7px; margin-bottom: 8px; position: relative; background: linear-gradient(var(--line), var(--line)) 0 3px/100% 1px no-repeat; }
+.scan .sweep { position: absolute; top: 0; left: 0; width: 70px; height: 3px; background: var(--accent); }
+.scan.busy .sweep { animation: sweep 2.2s linear infinite; }
+@keyframes sweep { 0% { transform: translateX(-70px); } 100% { transform: translateX(920px); } }
+.prog { height: 6px; background: var(--panel); position: relative; overflow: hidden; margin-bottom: 8px; }
+.prog .fill { position: absolute; left: 0; top: 0; height: 100%; background: var(--accent); width: 0%;
+  transition: width .3s ease; }
+.status { font-family: var(--mono); font-size: 10px; color: var(--grey); margin-bottom: 8px; min-height: 14px; }
+.status.err { color: var(--alert); }
+
 /* Params */
 .preset-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
 .preset-row .flabel { font-family: var(--mono); font-size: 10px; color: var(--grey); }

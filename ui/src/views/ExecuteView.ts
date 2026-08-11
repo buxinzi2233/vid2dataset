@@ -1,42 +1,43 @@
-//! Execute view: run strip + progress + console + open output.
+//! Execute view: run strip + scan + progress + console + open output.
 
-import { renderConsole } from "../components/Console";
+import { renderConsole, appendLogLine } from "../components/Console";
 import { renderButton } from "../components/Button";
-import { asCommandError, openFolder } from "../api/ipc";
+import {
+  asCommandError,
+  cancelRun,
+  openFolder,
+  startRun,
+} from "../api/ipc";
+import {
+  onExtractDone,
+  onExtractError,
+  onExtractLog,
+  onExtractProgress,
+} from "../api/events";
+import { el } from "../components/el";
 import { t } from "../i18n";
 import type { Store } from "../state/store";
-
-/** Map a structured open-folder error code to a friendly i18n message. */
-function openErrorText(code: string, path: string): string {
-  switch (code) {
-    case "PATH_NOT_FOUND":
-      return t("open_not_found", { path });
-    case "NOT_A_DIRECTORY":
-      return t("open_not_dir", { path });
-    case "PERMISSION_DENIED":
-      return t("open_permission", { path });
-    case "OPEN_FAILED":
-      return t("open_failed", { path });
-    default:
-      return t("open_unknown", { path });
-  }
-}
 
 export function renderExecuteView(store: Store): HTMLElement {
   const root = document.createElement("div");
   root.className = "view inner";
 
-  const strip = document.createElement("div");
-  strip.className = "run-strip";
-  const run = renderButton({ label: "EXTRACT DATASET", variant: "fill" });
-  const side = document.createElement("div");
-  side.className = "btn-side";
-  side.append(renderButton({ label: "ADVANCED…", variant: "orange" }));
-  side.append(renderButton({ label: "CANCEL", variant: "danger", disabled: true }));
-  strip.append(run, side);
+  const strip = el("div", "run-strip");
+  const runBtn = renderButton({ label: t("extract_big"), variant: "fill" });
+  const side = el("div", "btn-side");
+  const advBtn = renderButton({ label: t("advanced"), variant: "orange" });
+  const cancelBtn = renderButton({ label: t("cancel"), variant: "danger", disabled: true });
+  side.append(advBtn, cancelBtn);
+  strip.append(runBtn, side);
 
-  const status = document.createElement("div");
-  status.className = "validate-status";
+  const scan = el("div", "scan");
+  scan.append(el("div", "sweep"));
+
+  const prog = el("div", "prog");
+  const progFill = el("div", "fill");
+  prog.append(progFill);
+
+  const status = el("div", "status", t("ready"));
 
   const open = renderButton({
     label: "OPEN OUTPUT",
@@ -44,18 +45,88 @@ export function renderExecuteView(store: Store): HTMLElement {
     onClick: async () => {
       const path = store.outputPath || "output";
       try {
-        const res = await openFolder(path);
-        status.textContent = t("open_done", { path: res.opened });
-        status.className = "validate-status ok";
+        await openFolder(path);
+        status.textContent = t("open_done", { path });
+        status.className = "status";
       } catch (e) {
         const err = asCommandError(e);
-        status.textContent = openErrorText(err?.code ?? "OPEN_UNKNOWN", path);
-        status.className = "validate-status err";
+        status.textContent = err?.message ?? String(e);
+        status.className = "status err";
       }
     },
   });
 
   const console = renderConsole();
-  root.append(strip, console, open, status);
+  root.append(strip, scan, prog, status, console, open);
+
+  // ── Run lifecycle ─────────────────────────────────────────────
+  function setBusy(busy: boolean): void {
+    runBtn.disabled = busy;
+    cancelBtn.disabled = !busy;
+    scan.classList.toggle("busy", busy);
+  }
+
+  function buildConfig(): Record<string, unknown> {
+    return {
+      input: store.inputPath || "output",
+      output: store.outputPath || "output",
+      ...store.config,
+    };
+  }
+
+  function wireEvents(): void {
+    void onExtractProgress((e) => {
+      if (e.stage === "video") {
+        const pct = e.total > 0 ? Math.round((e.current / e.total) * 100) : 0;
+        progFill.style.width = `${pct}%`;
+        status.textContent = `Processing video ${e.current}/${e.total}…`;
+      } else {
+        status.textContent = `${e.stage}: ${e.current}/${e.total}`;
+      }
+    });
+
+    void onExtractLog((e) => appendLogLine(console, e.line));
+
+    void onExtractDone((e) => {
+      progFill.style.width = "100%";
+      status.textContent = t("run_done", { count: e.total_written, time: e.elapsed_s.toFixed(1) });
+      setBusy(false);
+    });
+
+    void onExtractError((e) => {
+      status.textContent = t("run_error", { msg: e.message });
+      status.className = "status err";
+      setBusy(false);
+    });
+  }
+
+  runBtn.addEventListener("click", async () => {
+    if (!store.inputPath) {
+      status.textContent = t("no_input");
+      status.className = "status err";
+      return;
+    }
+    status.textContent = t("run_started");
+    status.className = "status";
+    setBusy(true);
+    try {
+      await startRun(buildConfig() as never);
+    } catch (e) {
+      status.textContent = t("run_error", { msg: String(e) });
+      status.className = "status err";
+      setBusy(false);
+    }
+  });
+
+  cancelBtn.addEventListener("click", async () => {
+    status.textContent = t("cancelling");
+    try {
+      await cancelRun();
+    } catch (e) {
+      status.textContent = String(e);
+    }
+  });
+
+  wireEvents();
   return root;
 }
