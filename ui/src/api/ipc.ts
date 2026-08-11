@@ -33,6 +33,20 @@ export function configDefaults(): Promise<Record<string, unknown>> {
   return invoke("config_defaults");
 }
 
+export interface ConfigError {
+  field: string;
+  message: string;
+}
+
+export interface ValidateResult {
+  valid: boolean;
+  errors: ConfigError[];
+}
+
+export function validateConfig(config: Partial<ExtractConfig>): Promise<ValidateResult> {
+  return invoke("config_validate", { config });
+}
+
 export function discoverVideos(path: string): Promise<string[]> {
   return invoke("discover_videos", { path });
 }

@@ -88,6 +88,23 @@ def test_config_defaults_has_resolution(proc) -> None:
     assert resp["result"]["input"]["type"] == "string"
 
 
+def test_config_validate_accepts_minimal(proc) -> None:
+    resp = _exchange(proc, [{"id": 3, "method": "config.validate",
+                             "params": {"config": {"input": "/tmp/vids"}}}])[0]
+    assert resp["ok"] is True
+    assert resp["result"] == {"valid": True, "errors": []}
+
+
+def test_config_validate_reports_invalid(proc) -> None:
+    resp = _exchange(proc, [{"id": 4, "method": "config.validate",
+                             "params": {"config": {"input": "/tmp/vids",
+                                                   "resolution": 4}}}])[0]
+    assert resp["ok"] is True
+    result = resp["result"]
+    assert result["valid"] is False
+    assert any(e["field"] == "resolution" for e in result["errors"])
+
+
 def test_unknown_method_rejected(proc) -> None:
     resp = _exchange(proc, [{"id": 3, "method": "nope.missing", "params": {}}])[0]
     assert resp["ok"] is False

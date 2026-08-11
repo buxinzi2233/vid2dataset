@@ -41,6 +41,7 @@ fn main() {
             commands::list_presets,
             commands::load_preset,
             commands::config_defaults,
+            commands::config_validate,
             commands::discover_videos,
             commands::probe_video,
             commands::start_run,

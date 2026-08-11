@@ -55,6 +55,22 @@ def _config_defaults(_params: dict) -> dict:
     return ExtractConfig.model_json_schema()["properties"]
 
 
+def _config_validate(params: dict) -> dict:
+    from pydantic import ValidationError
+
+    try:
+        ExtractConfig(**params["config"])
+    except ValidationError as e:
+        return {
+            "valid": False,
+            "errors": [
+                {"field": ".".join(str(x) for x in err["loc"]), "message": err["msg"]}
+                for err in e.errors()
+            ],
+        }
+    return {"valid": True, "errors": []}
+
+
 def _source_discover(params: dict) -> list[str]:
     from pathlib import Path
 
@@ -204,7 +220,7 @@ def _gpu_status(_params: dict) -> dict:
 
 METHODS: dict[str, Callable[[dict], object]] = {
     "config.defaults": _config_defaults,
-    "config.validate": lambda p: _not_impl("config.validate"),
+    "config.validate": _config_validate,
     "presets.list": _presets,
     "presets.load": _preset_load,
     "source.discover": _source_discover,

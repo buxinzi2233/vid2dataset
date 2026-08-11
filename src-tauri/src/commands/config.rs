@@ -102,6 +102,32 @@ pub fn config_defaults(state: State<'_, AppState>) -> Result<Value, String> {
     }
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidateConfigArgs {
+    pub config: Value,
+}
+
+/// Validate a config dict via the sidecar's Pydantic model.
+/// Returns `{"valid": bool, "errors": [{field, message}]}`.
+#[tauri::command]
+pub fn config_validate(
+    args: ValidateConfigArgs,
+    state: State<'_, AppState>,
+) -> Result<Value, String> {
+    let result = state
+        .bridge
+        .lock()
+        .unwrap()
+        .request("config.validate", json!({ "config": args.config }));
+    if result.ok {
+        Ok(result.result)
+    } else {
+        let e = result.error.unwrap_or(ErrorInfo { code: "ERR".into(), message: "".into() });
+        Err(format!("{}: {}", e.code, e.message))
+    }
+}
+
 /// Open a native folder picker; returns the chosen path or null when cancelled.
 #[tauri::command]
 pub async fn browse_folder(_app: AppHandle) -> Result<Option<String>, String> {

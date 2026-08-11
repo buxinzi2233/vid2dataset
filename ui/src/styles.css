@@ -77,6 +77,9 @@ body {
 .run-strip .btn-side { display: flex; flex-direction: column; gap: 6px; width: 120px; }
 .run-strip .btn-side .btn { flex: none; font-size: 11px; height: 26px; }
 .cap-fields { display: flex; flex-direction: column; gap: 10px; }
+.validate-status { font-family: var(--mono); font-size: 10px; margin-top: 10px; color: var(--grey); }
+.validate-status.ok { color: var(--ink); }
+.validate-status.err { color: var(--alert); }
 .console { background: #111110; color: #e8e6e0; font-family: var(--mono); font-size: 10px; line-height: 1.7;
   padding: 12px 14px; min-height: 200px; border-left: 2px solid var(--accent); }
 
