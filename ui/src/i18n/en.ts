@@ -51,4 +51,10 @@ export const en: Record<string, string> = {
   eta: "ETA: {remaining}",
   done: "Done — {count} images in {time:.1f}s",
   error: "Error",
+  open_done: "Opened — {path}",
+  open_not_found: "Folder does not exist: {path}",
+  open_not_dir: "Not a directory: {path}",
+  open_permission: "Permission denied: {path}",
+  open_failed: "Could not open folder: {path}",
+  open_unknown: "Could not open folder: {path}",
 };

@@ -51,4 +51,10 @@ export const zh: Record<string, string> = {
   eta: "预计剩余：{remaining}",
   done: "完成 — {count} 张图片，耗时 {time:.1f}秒",
   error: "错误",
+  open_done: "已打开 — {path}",
+  open_not_found: "文件夹不存在：{path}",
+  open_not_dir: "不是文件夹：{path}",
+  open_permission: "没有权限打开：{path}",
+  open_failed: "无法打开文件夹：{path}",
+  open_unknown: "无法打开文件夹：{path}",
 };

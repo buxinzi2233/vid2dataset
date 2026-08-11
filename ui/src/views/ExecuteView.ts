@@ -2,8 +2,25 @@
 
 import { renderConsole } from "../components/Console";
 import { renderButton } from "../components/Button";
-import { openFolder } from "../api/ipc";
+import { asCommandError, openFolder } from "../api/ipc";
+import { t } from "../i18n";
 import type { Store } from "../state/store";
+
+/** Map a structured open-folder error code to a friendly i18n message. */
+function openErrorText(code: string, path: string): string {
+  switch (code) {
+    case "PATH_NOT_FOUND":
+      return t("open_not_found", { path });
+    case "NOT_A_DIRECTORY":
+      return t("open_not_dir", { path });
+    case "PERMISSION_DENIED":
+      return t("open_permission", { path });
+    case "OPEN_FAILED":
+      return t("open_failed", { path });
+    default:
+      return t("open_unknown", { path });
+  }
+}
 
 export function renderExecuteView(store: Store): HTMLElement {
   const root = document.createElement("div");
@@ -28,10 +45,11 @@ export function renderExecuteView(store: Store): HTMLElement {
       const path = store.outputPath || "output";
       try {
         const res = await openFolder(path);
-        status.textContent = `OPENED — ${res.opened}`;
+        status.textContent = t("open_done", { path: res.opened });
         status.className = "validate-status ok";
       } catch (e) {
-        status.textContent = `OPEN — error: ${String(e)}`;
+        const err = asCommandError(e);
+        status.textContent = openErrorText(err?.code ?? "OPEN_UNKNOWN", path);
         status.className = "validate-status err";
       }
     },

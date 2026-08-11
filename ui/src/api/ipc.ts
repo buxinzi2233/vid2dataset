@@ -89,6 +89,23 @@ export function openFolder(path: string): Promise<{ opened: string }> {
   return invoke("open_folder", { path });
 }
 
+/** Structured error surfaced by Rust commands (serde-serialized error type). */
+export interface CommandError {
+  code: string;
+  message: string;
+}
+
+/** Extract a structured error from a rejected invoke if possible. */
+export function asCommandError(e: unknown): CommandError | null {
+  if (e && typeof e === "object" && "code" in e && "message" in e) {
+    const c = e as { code: unknown; message: unknown };
+    if (typeof c.code === "string" && typeof c.message === "string") {
+      return { code: c.code, message: c.message };
+    }
+  }
+  return null;
+}
+
 export function advOpen(path: string): Promise<VideoMeta> {
   return invoke("adv_open", { path });
 }
