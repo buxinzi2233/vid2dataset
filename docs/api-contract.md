@@ -60,7 +60,7 @@ stdout 只写协议帧；Python 日志输出到 **stderr**（Rust 单独线程�
 | `config.defaults` | `{}` | `ExtractConfig` JSON schema `properties` | ✅ 真接通 |
 | `config.validate` | `{"config": {...}}` | `{"valid": bool, "errors": [...]}` | stub |
 | `presets.list` | `{}` | `[{"name": str, "description": str}]` | ✅ 真接通 |
-| `presets.load` | `{"name": str}` | `{...preset overrides...}` | stub |
+| `presets.load` | `{"name": str}` | `{...preset overrides...}`（`Partial<ExtractConfig>`，`description` 已剥离） | ✅ 真接通 |
 | `source.discover` | `{"path": str}` | `[video path string]` | ✅ 真接通 |
 | `source.probe` | `{"path": str}` | `VideoMeta` | ✅ 真接通 |
 | `extract.run` | `{"config": {...}}` | `{"started": true}`（事件流 `extract.progress/log/done/error`） | ✅ 真接通 |

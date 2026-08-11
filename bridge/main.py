@@ -45,6 +45,12 @@ def _presets(_params: dict) -> list[dict]:
     return [{"name": n, "description": d} for n, d in list_presets()]
 
 
+def _preset_load(params: dict) -> dict:
+    from vid2dataset.presets import load_preset
+
+    return load_preset(params["name"])
+
+
 def _config_defaults(_params: dict) -> dict:
     return ExtractConfig.model_json_schema()["properties"]
 
@@ -172,7 +178,7 @@ METHODS: dict[str, Callable[[dict], object]] = {
     "config.defaults": _config_defaults,
     "config.validate": lambda p: _not_impl("config.validate"),
     "presets.list": _presets,
-    "presets.load": lambda p: _not_impl("presets.load"),
+    "presets.load": _preset_load,
     "source.discover": _source_discover,
     "source.probe": _source_probe,
     "extract.run": _extract_run,

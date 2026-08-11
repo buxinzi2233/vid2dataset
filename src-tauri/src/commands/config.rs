@@ -77,8 +77,18 @@ pub struct LoadPresetArgs {
 }
 
 #[tauri::command]
-pub fn load_preset(args: LoadPresetArgs) -> Result<Value, String> {
-    not_impl(&format!("load_preset({})", args.name))
+pub fn load_preset(args: LoadPresetArgs, state: State<'_, AppState>) -> Result<Value, String> {
+    let result = state
+        .bridge
+        .lock()
+        .unwrap()
+        .request("presets.load", json!({ "name": args.name }));
+    if result.ok {
+        Ok(result.result)
+    } else {
+        let e = result.error.unwrap_or_default();
+        Err(format!("{}: {}", e.code, e.message))
+    }
 }
 
 #[tauri::command]

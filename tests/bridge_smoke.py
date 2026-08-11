@@ -62,6 +62,25 @@ def test_presets_list_returns_anima_style(proc) -> None:
     assert all("description" in r for r in resp["result"])
 
 
+def test_preset_load_returns_overrides(proc) -> None:
+    resp = _exchange(proc, [{"id": 6, "method": "presets.load",
+                             "params": {"name": "anima-style"}}])[0]
+    assert resp["ok"] is True
+    result = resp["result"]
+    # Known anima-style overrides, shaped as Partial<ExtractConfig>.
+    assert result["sampling"] == "hybrid"
+    assert result["resolution"] == 1024
+    assert result["blur_threshold"] == 50.0
+    assert "description" not in result  # description is metadata, stripped
+
+
+def test_preset_load_unknown_errors(proc) -> None:
+    resp = _exchange(proc, [{"id": 7, "method": "presets.load",
+                             "params": {"name": "nope"}}])[0]
+    assert resp["ok"] is False
+    assert resp["error"]["code"] == "FileNotFoundError"
+
+
 def test_config_defaults_has_resolution(proc) -> None:
     resp = _exchange(proc, [{"id": 2, "method": "config.defaults", "params": {}}])[0]
     assert resp["ok"] is True
