@@ -49,6 +49,7 @@ fn main() {
             commands::adv_open,
             commands::adv_seek,
             commands::adv_capture,
+            commands::adv_segments,
             commands::tagger_status,
             commands::tagger_download,
             commands::tagger_run,
