@@ -51,11 +51,11 @@ export function discoverVideos(path: string): Promise<string[]> {
   return invoke("discover_videos", { path });
 }
 
-export function startRun(config: ExtractConfig): Promise<void> {
+export function startRun(config: ExtractConfig): Promise<{ started: boolean }> {
   return invoke("start_run", { config });
 }
 
-export function cancelRun(): Promise<void> {
+export function cancelRun(): Promise<{ cancelled: boolean }> {
   return invoke("cancel_run");
 }
 

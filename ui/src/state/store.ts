@@ -1,8 +1,9 @@
-//! App store: config, presets, input/output paths, persisted prefs.
+//! App store: config, presets, input/output paths, persisted prefs, run state.
 //! Prefs live here (merged into the store) to avoid a one-function module.
 
 import type { ExtractConfig } from "../api/types";
 import { listPresets, loadPreset } from "../api/ipc";
+import { RunState } from "./runState";
 
 export interface PresetInfo {
   name: string;
@@ -16,6 +17,11 @@ export interface Prefs {
   preset?: string;
 }
 
+export interface Segment {
+  start: number;
+  end: number;
+}
+
 export class Store {
   config: Partial<ExtractConfig> = {};
   presets: PresetInfo[] = [];
@@ -23,12 +29,17 @@ export class Store {
   outputPath = "";
   lang: "en" | "zh" = "zh";
   prefs: Prefs = { lang: "zh" };
+  presetName = "";
+  selectedParam: string | null = null;
+  segments: Record<string, Segment[]> = {};
+  run = new RunState();
 
   async init(): Promise<void> {
     this.presets = await listPresets();
   }
 
   async applyPreset(name: string): Promise<void> {
+    this.presetName = name;
     this.config = await loadPreset(name);
   }
 
@@ -45,5 +56,13 @@ export class Store {
   setLang(lang: "en" | "zh"): void {
     this.lang = lang;
     this.prefs.lang = lang;
+  }
+
+  setParam(key: string, value: string | number | boolean): void {
+    this.config = { ...this.config, [key]: value };
+  }
+
+  selectParam(key: string | null): void {
+    this.selectedParam = key;
   }
 }
