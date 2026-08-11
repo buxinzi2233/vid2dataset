@@ -1,10 +1,14 @@
 //! App shell: top bar + left rail + viewport + right inspector.
-//!
-//! Builds the fixed chrome (structure only, no business logic). View content
-//! slots are filled by `views/*` in task 10.
 
+import { renderInspector } from "./components/Inspector";
+import { renderSourceView } from "./views/SourceView";
+import { renderParamsView } from "./views/ParamsView";
+import { renderCaptionView } from "./views/CaptionView";
+import { renderRosterView } from "./views/RosterView";
+import { renderExecuteView } from "./views/ExecuteView";
 import { applyHead } from "./theme/theme";
 import { applyTokenVars, SHELL } from "./theme/tokens";
+import { Store } from "./state/store";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
@@ -58,36 +62,28 @@ function buildRail(): HTMLElement {
   return rail;
 }
 
-function buildViewport(): HTMLElement {
+function buildViewport(store: Store): HTMLElement {
   const viewport = el("main", "viewport");
-  // Placeholder view slot; replaced by views/* in task 10.
-  const inner = el("div", "view inner");
-  const hint = el("div", "view-hint");
-  hint.textContent = "// VIEW SLOT — filled by views/* (task 10)";
-  inner.append(hint);
-  viewport.append(inner);
+  viewport.append(
+    renderSourceView(store),
+    renderParamsView(store),
+    renderCaptionView(store),
+    renderRosterView(store),
+    renderExecuteView(store),
+  );
   return viewport;
-}
-
-function buildInspector(): HTMLElement {
-  const inspector = el("aside", "inspector");
-  const tab = el("div", "insp-tab");
-  tab.textContent = "INSPECT";
-  const panel = el("div", "insp-panel");
-  const bar = el("div", "ibar");
-  bar.textContent = "INSPECT // RL-PARSE";
-  panel.append(bar);
-  inspector.append(tab, panel);
-  return inspector;
 }
 
 export function renderApp(root: HTMLElement): void {
   applyTokenVars();
   applyHead("dark");
 
+  const store = new Store();
+  void store.init();
+
   const app = el("div", "app");
   const work = el("div", "work");
-  work.append(buildRail(), buildViewport(), buildInspector());
+  work.append(buildRail(), buildViewport(store), renderInspector({}));
   app.append(buildTopBar(), work);
 
   root.style.width = `${SHELL.designW}px`;
