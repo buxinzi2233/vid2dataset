@@ -109,7 +109,7 @@ stdout 只写协议帧；Python 日志输出到 **stderr**（Rust 单独线程�
 | `adv_seek` | `{ path, frame }` | `{ frame_b64 }`（JPEG base64） | bridge `advanced.seek` |
 | `adv_capture` | `{ path, frame, config }` | `{ out_path }` | bridge `advanced.capture` |
 | `adv_segments` | `{ segments }` | `{ saved }` | bridge `advanced.segments` |
-| `open_folder` | `{ path }` | `null` | opener 插件/OS |
+| `open_folder` | `{ path }` | `{ opened }` | Rust 本地（`open`/`xdg-open`/`explorer`），不经 bridge |
 
 ### 前端数据模型（`ui/src/api/types.ts`，由 Pydantic 生成）
 

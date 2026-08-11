@@ -85,6 +85,10 @@ export function gpuDownload(): Promise<{ started: boolean }> {
   return invoke("gpu_download");
 }
 
+export function openFolder(path: string): Promise<{ opened: string }> {
+  return invoke("open_folder", { path });
+}
+
 export function advOpen(path: string): Promise<VideoMeta> {
   return invoke("adv_open", { path });
 }
