@@ -19,13 +19,33 @@ pub struct PathArgs {
 }
 
 #[tauri::command]
-pub fn discover_videos(args: PathArgs) -> Result<Value, String> {
-    not_impl(&format!("discover_videos({})", args.path))
+pub fn discover_videos(args: PathArgs, state: State<'_, AppState>) -> Result<Value, String> {
+    let result = state
+        .bridge
+        .lock()
+        .unwrap()
+        .request("source.discover", json!({ "path": args.path }));
+    if result.ok {
+        Ok(result.result)
+    } else {
+        let e = result.error.unwrap_or_default();
+        Err(format!("{}: {}", e.code, e.message))
+    }
 }
 
 #[tauri::command]
-pub fn probe_video(args: PathArgs) -> Result<Value, String> {
-    not_impl(&format!("probe_video({})", args.path))
+pub fn probe_video(args: PathArgs, state: State<'_, AppState>) -> Result<Value, String> {
+    let result = state
+        .bridge
+        .lock()
+        .unwrap()
+        .request("source.probe", json!({ "path": args.path }));
+    if result.ok {
+        Ok(result.result)
+    } else {
+        let e = result.error.unwrap_or_default();
+        Err(format!("{}: {}", e.code, e.message))
+    }
 }
 
 #[derive(Deserialize)]

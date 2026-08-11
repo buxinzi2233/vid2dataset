@@ -23,6 +23,7 @@ from collections.abc import Callable
 
 from vid2dataset.config import ExtractConfig
 from vid2dataset.extractor import run_pipeline
+from vid2dataset.io_utils import discover_videos, probe_video
 from vid2dataset.presets import list_presets
 
 log = logging.getLogger("bridge")
@@ -46,6 +47,26 @@ def _presets(_params: dict) -> list[dict]:
 
 def _config_defaults(_params: dict) -> dict:
     return ExtractConfig.model_json_schema()["properties"]
+
+
+def _source_discover(params: dict) -> list[str]:
+    from pathlib import Path
+
+    return [str(p) for p in discover_videos(Path(params["path"]))]
+
+
+def _source_probe(params: dict) -> dict:
+    from pathlib import Path
+
+    meta = probe_video(Path(params["path"]))
+    return {
+        "path": str(meta.path),
+        "fps": meta.fps,
+        "frame_count": meta.frame_count,
+        "width": meta.width,
+        "height": meta.height,
+        "duration_s": meta.duration_s,
+    }
 
 
 class _LogHandler(logging.Handler):
@@ -109,8 +130,8 @@ METHODS: dict[str, Callable[[dict], object]] = {
     "config.validate": lambda p: _not_impl("config.validate"),
     "presets.list": _presets,
     "presets.load": lambda p: _not_impl("presets.load"),
-    "source.discover": lambda p: _not_impl("source.discover"),
-    "source.probe": lambda p: _not_impl("source.probe"),
+    "source.discover": _source_discover,
+    "source.probe": _source_probe,
     "extract.run": _extract_run,
     "extract.cancel": _extract_cancel,
     "tagger.status": lambda p: _not_impl("tagger.status"),

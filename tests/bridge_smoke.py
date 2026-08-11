@@ -210,3 +210,50 @@ def test_extract_cancel_sets_event(proc, tmp_path) -> None:
     # The run eventually emits extract.done (possibly with partial output).
     _read_frames_until(proc, lambda f: f.get("event") == "extract.done", max_lines=600)
 
+
+# ── source.discover / source.probe ──────────────────────────────────────
+
+
+def test_source_discover_lists_directory_videos(proc, tmp_path) -> None:
+    _write_video(tmp_path / "a.mp4", frames=10)
+    _write_video(tmp_path / "b.mkv", frames=10)
+    (tmp_path / "note.txt").write_text("x")
+
+    resp = _exchange(proc, [{"id": 70, "method": "source.discover",
+                             "params": {"path": str(tmp_path)}}])[0]
+    assert resp["ok"] is True
+    names = sorted(Path(p).name for p in resp["result"])
+    assert names == ["a.mp4", "b.mkv"]
+
+
+def test_source_discover_single_file(proc, tmp_path) -> None:
+    video = tmp_path / "clip.mp4"
+    _write_video(video, frames=10)
+
+    resp = _exchange(proc, [{"id": 71, "method": "source.discover",
+                             "params": {"path": str(video)}}])[0]
+    assert resp["ok"] is True
+    assert resp["result"] == [str(video)]
+
+
+def test_source_probe_returns_metadata(proc, tmp_path) -> None:
+    video = tmp_path / "clip.mp4"
+    _write_video(video, frames=45)
+
+    resp = _exchange(proc, [{"id": 72, "method": "source.probe",
+                             "params": {"path": str(video)}}])[0]
+    assert resp["ok"] is True
+    meta = resp["result"]
+    assert meta["path"] == str(video)
+    assert meta["width"] > 0 and meta["height"] > 0
+    assert meta["frame_count"] >= 45
+    assert meta["fps"] > 0
+    assert meta["duration_s"] > 0
+
+
+def test_source_probe_missing_file_errors(proc, tmp_path) -> None:
+    resp = _exchange(proc, [{"id": 73, "method": "source.probe",
+                             "params": {"path": str(tmp_path / "nope.mp4")}}])[0]
+    assert resp["ok"] is False
+    assert resp["error"]["code"] != "NotImplemented"
+
