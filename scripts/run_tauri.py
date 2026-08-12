@@ -17,6 +17,9 @@ def main() -> int:
         raise SystemExit("Tauri CLI is not installed; run pnpm install in ui first")
 
     env = os.environ.copy()
+    if len(sys.argv) > 1 and sys.argv[1] == "dev":
+        env["VID2DATASET_PYTHON"] = str(REPO_ROOT / "venv" / "bin" / "python")
+        env["VID2DATASET_BRIDGE_SCRIPT"] = str(REPO_ROOT / "bridge" / "main.py")
     if sys.platform.startswith("linux"):
         site_packages = Path(sysconfig.get_paths()["purelib"])
         wheel_libs = [

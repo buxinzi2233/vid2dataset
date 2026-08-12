@@ -57,7 +57,7 @@ export const SWITCHES: SwitchMeta[] = [
   {
     key: "gpu_accel",
     label: "GPU acceleration",
-    tip: "Uses the detected GPU runtime for experimental hardware video decoding. Missing runtime is downloaded once; incompatible output falls back safely. / 使用检测到的 GPU 运行时进行实验性硬件解码；缺失组件仅下载一次，不兼容时安全回退。",
+    tip: "Uses CUDA filters and a validated hardware video decoder. Windows can download the runtime once; Linux AppImage users need a CUDA-enabled source environment. Extraction is blocked when GPU is requested but unavailable. / 使用 CUDA 过滤器和经验证的硬件视频解码。Windows 可一次性下载运行时；Linux AppImage 需使用带 CUDA 的源码环境。请求 GPU 但不可用时会阻止提取。",
   },
 ];
 

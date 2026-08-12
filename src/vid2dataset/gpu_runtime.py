@@ -10,7 +10,9 @@ once and cached at ``%LOCALAPPDATA%/vid2dataset/gpu_runtime``.
 
 Cross-platform notes:
 - Windows: works for NVIDIA via CUDA 12.6 wheels (12.8 for Blackwell / RTX 50xx).
-- Linux: would work with the cu126/cu128 wheels too (untested).
+- Linux: source builds use their installed CUDA-enabled PyTorch. Automatic
+  runtime download is disabled because PyTorch's Linux CUDA runtime is split
+  across a large platform-specific dependency set.
 - macOS: torch+MPS uses different wheels (we currently do not auto-download
   on macOS; user should pip-install manually).
 """
@@ -24,6 +26,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 import zipfile
@@ -312,23 +315,21 @@ def detect_gpu() -> HardwareProfile:
     # Linux fallback: try lspci
     if os_name == "linux":
         out = _run_cmd(["lspci"])
-        for line in out.splitlines():
-            ll = line.lower()
-            if "vga" in ll or "3d controller" in ll or "display" in ll:
-                if "nvidia" in ll:
+        display_lines = [
+            line
+            for line in out.splitlines()
+            if any(kind in line.lower() for kind in ("vga", "3d controller", "display"))
+        ]
+        for vendor, arch, needles in (
+            ("NVIDIA", "", ("nvidia",)),
+            ("AMD", "rdna", ("amd", "radeon")),
+        ):
+            for line in display_lines:
+                if any(needle in line.lower() for needle in needles):
                     return HardwareProfile(
-                        vendor="NVIDIA",
+                        vendor=vendor,
                         gpu_name=line.split(":")[-1].strip(),
-                        arch="",
-                        compute_cap=0.0,
-                        os_name=os_name,
-                        os_arch=os_arch,
-                    )
-                if "amd" in ll or "radeon" in ll:
-                    return HardwareProfile(
-                        vendor="AMD",
-                        gpu_name=line.split(":")[-1].strip(),
-                        arch="rdna",
+                        arch=arch,
                         compute_cap=0.0,
                         os_name=os_name,
                         os_arch=os_arch,
@@ -470,6 +471,8 @@ class RuntimeStatus:
     cache_dir: Path
     size_mb: float
     cuda_tag: str | None = None  # CUDA tag the cache was built for (from manifest)
+    error: str | None = None
+    can_download: bool = False
 
 
 def runtime_status() -> RuntimeStatus:
@@ -484,18 +487,43 @@ def runtime_status() -> RuntimeStatus:
             version = str(data.get("version", ""))
             raw_tag = data.get("cuda_tag")
             cuda_tag = str(raw_tag) if raw_tag else None
-            cached = version == RUNTIME_VERSION and (RUNTIME_DIR / "torch" / "__init__.py").exists()
+            cached = (
+                version == RUNTIME_VERSION
+                and data.get("platform") == sys.platform
+                and data.get("python_tag") == _py_tag()
+                and (RUNTIME_DIR / "torch" / "__init__.py").exists()
+            )
         except Exception:
             pass
 
     # Quick check: can we already import torch with CUDA?
     available = False
+    error = None
     try:
         import torch  # type: ignore[import-not-found]
 
         available = bool(getattr(torch.cuda, "is_available", lambda: False)())
-    except ImportError:
-        pass
+        if not available:
+            error = "PyTorch is installed, but CUDA is not available in this process"
+    except Exception as e:
+        error = f"Could not load PyTorch: {type(e).__name__}: {e}"
+
+    if not available and cached:
+        available, activate_error = activate_runtime()
+        error = None if available else activate_error
+
+    can_download = False
+    if not available:
+        hardware = detect_gpu()
+        supported, unsupported_reason = runtime_supported(hardware)
+        can_download = sys.platform == "win32" and supported
+        if not supported:
+            error = unsupported_reason
+        elif not can_download:
+            error = (
+                "Automatic PyTorch runtime download is only supported on Windows; "
+                "run from source with a CUDA-enabled project environment on Linux"
+            )
 
     size_mb = 0.0
     if RUNTIME_DIR.exists():
@@ -510,6 +538,8 @@ def runtime_status() -> RuntimeStatus:
         cache_dir=RUNTIME_DIR,
         size_mb=size_mb,
         cuda_tag=cuda_tag,
+        error=error,
+        can_download=can_download,
     )
 
 
@@ -552,14 +582,23 @@ def _clear_stale_cache(wheels: dict[str, str], cuda_tag: str) -> None:
     manifest_path = RUNTIME_DIR / MANIFEST_FILE
     current = None
     current_tag = None
+    current_platform = None
+    current_python_tag = None
     if manifest_path.exists():
         try:
             data = json.loads(manifest_path.read_text(encoding="utf-8"))
             current = data.get("version")
             current_tag = data.get("cuda_tag")
+            current_platform = data.get("platform")
+            current_python_tag = data.get("python_tag")
         except Exception:
             current = None
-    if current == RUNTIME_VERSION and current_tag == cuda_tag:
+    if (
+        current == RUNTIME_VERSION
+        and current_tag == cuda_tag
+        and current_platform == sys.platform
+        and current_python_tag == _py_tag()
+    ):
         return  # cache already holds the target build; nothing stale
     keep = {_wheel_target(n, u) for n, u in wheels.items()}
     for p in RUNTIME_DIR.iterdir():
@@ -578,6 +617,9 @@ def _clear_stale_cache(wheels: dict[str, str], cuda_tag: str) -> None:
             p.unlink(missing_ok=True)
 
 
+_download_lock = threading.Lock()
+
+
 def download_runtime(
     progress: ProgressCallback | None = None,
     *,
@@ -589,6 +631,23 @@ def download_runtime(
     Returns True on success. On failure, leaves the cache directory in
     a partial state which the next call can clean up and retry.
     """
+    if sys.platform != "win32":
+        raise RuntimeError(
+            "Automatic GPU runtime download is only supported on Windows. "
+            "On Linux, run from source with CUDA-enabled PyTorch installed."
+        )
+    with _download_lock:
+        if runtime_status().available:
+            return True
+        return _download_runtime_locked(progress, cuda_tag=cuda_tag, torch_url=torch_url)
+
+
+def _download_runtime_locked(
+    progress: ProgressCallback | None,
+    *,
+    cuda_tag: str | None,
+    torch_url: str | None,
+) -> bool:
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     if cuda_tag is None:
         hw = detect_gpu()
@@ -632,7 +691,15 @@ def download_runtime(
 
     # Write manifest
     (RUNTIME_DIR / MANIFEST_FILE).write_text(
-        json.dumps({"version": RUNTIME_VERSION, "cuda_tag": cuda_tag}, indent=2),
+        json.dumps(
+            {
+                "version": RUNTIME_VERSION,
+                "cuda_tag": cuda_tag,
+                "platform": sys.platform,
+                "python_tag": _py_tag(),
+            },
+            indent=2,
+        ),
         encoding="utf-8",
     )
     log.info("GPU runtime ready at %s", RUNTIME_DIR)
@@ -680,12 +747,12 @@ def activate_runtime() -> tuple[bool, str]:
         return False, "torch/__init__.py not found in cache directory"
 
     runtime_str = str(RUNTIME_DIR)
-    if runtime_str not in sys.path:
-        # Append (not insert at 0): PyInstaller-bundled deps win for shared
-        # packages like typing_extensions (newer in bundle than what torch
-        # would pin). torch is excluded from the .exe so it's only in cache,
-        # which means it gets found there regardless of position.
-        sys.path.append(runtime_str)
+    while runtime_str in sys.path:
+        sys.path.remove(runtime_str)
+    # The cached CUDA build must win over a CPU-only torch that may already be
+    # installed in the host interpreter. The cache includes its pinned runtime
+    # dependencies, so placing it first is deliberate.
+    sys.path.insert(0, runtime_str)
 
     if sys.platform == "win32":
         cuda_dll_dir = RUNTIME_DIR / "torch" / "lib"
@@ -713,6 +780,10 @@ def activate_runtime() -> tuple[bool, str]:
                 "Likely missing or outdated NVIDIA driver, or the downloaded "
                 "CUDA build does not match your GPU."
             )
+        filters = sys.modules.get("vid2dataset.gpu_filters")
+        if filters is not None:
+            filters.torch = torch
+            filters._HAS_TORCH = True
         return True, ""
     except ImportError as e:
         log.error("Failed to import torch from runtime: %s", e)

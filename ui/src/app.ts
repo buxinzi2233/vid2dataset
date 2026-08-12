@@ -79,7 +79,7 @@ function bindEvents(store: Store): void {
   void onExtractDone((event) => store.run.finish(event));
   void onExtractError((event) => store.run.fail(event.message));
   void onDownloadProgress((event) => store.handleDownloadProgress(event));
-  void onDownloadDone((event) => store.handleDownloadDone(event));
+  void onDownloadDone((event) => void store.handleDownloadDone(event));
   void onTaggerDone((event) => store.handleTaggerDone(event));
 }
 
@@ -97,7 +97,7 @@ function buildTopBar(store: Store, onRun: () => void, onLanguage: () => void): H
   const preset = el("div", "preset");
   preset.append(el("span", "plabel", t("preset")));
   const select = renderSelectMenu({
-    options: store.presets.map((item) => ({ value: item.name, label: item.name })),
+    options: store.presets.map((item) => ({ value: item.name, label: item.user ? `${item.name} *` : item.name })),
     value: store.presetName,
     className: "preset-select",
     ariaLabel: t("preset"),
@@ -105,6 +105,7 @@ function buildTopBar(store: Store, onRun: () => void, onLanguage: () => void): H
   });
   select.root.dataset.preset = "top";
   preset.append(select.root);
+  let presetSignature = store.presets.map((item) => `${item.name}:${item.user ? 1 : 0}`).join("|");
 
   const actions = el("div", "actions");
   const zoom = el("div", "zoom");
@@ -123,6 +124,11 @@ function buildTopBar(store: Store, onRun: () => void, onLanguage: () => void): H
   bar.append(identity, spacer, preset, actions);
 
   const unsubscribe = store.subscribe(() => {
+    const nextPresetSignature = store.presets.map((item) => `${item.name}:${item.user ? 1 : 0}`).join("|");
+    if (nextPresetSignature !== presetSignature) {
+      presetSignature = nextPresetSignature;
+      select.setOptions(store.presets.map((item) => ({ value: item.name, label: item.user ? `${item.name} *` : item.name })));
+    }
     select.setValue(store.presetName);
     zoomValue.textContent = `${Math.round(store.zoom * 100)}%`;
     const busy = store.run.status === "running" || store.run.status === "cancelling";

@@ -1,5 +1,6 @@
-import { gpuDownload } from "../api/ipc";
 import { renderPanel } from "../components/Panel";
+import { renderButton } from "../components/Button";
+import { renderModal, showModal } from "../components/Modal";
 import { renderSwitch } from "../components/Switch";
 import { renderSelectMenu } from "../components/SelectMenu";
 import { el } from "../components/el";
@@ -20,7 +21,7 @@ export function renderParamsView(store: Store): ParamsView {
   const body = el("div");
   const presetRow = el("div", "preset-row");
   const presetSelect = renderSelectMenu({
-    options: store.presets.map((preset) => ({ value: preset.name, label: preset.name })),
+    options: store.presets.map((preset) => ({ value: preset.name, label: preset.user ? `${preset.name} *` : preset.name })),
     value: store.presetName,
     className: "preset-select",
     ariaLabel: t("preset"),
@@ -28,7 +29,61 @@ export function renderParamsView(store: Store): ParamsView {
   });
   presetSelect.root.dataset.preset = "params";
   const presetDesc = el("span", "preset-desc");
-  presetRow.append(el("span", "flabel", t("preset")), presetSelect.root, presetDesc);
+  const savePresetButton = renderButton({ label: t("save_preset"), className: "preset-save" });
+  const presetName = el("input");
+  presetName.placeholder = t("preset_name");
+  presetName.maxLength = 64;
+  const presetDescription = el("input");
+  presetDescription.placeholder = t("preset_description");
+  presetDescription.maxLength = 160;
+  const presetStatus = el("div", "preset-save-status");
+  const presetActions = el("div", "modal-actions");
+  const presetModal = renderModal({
+    title: t("save_preset_title"),
+    tag: "USER CONFIG",
+    width: 420,
+    body: [
+      el("label", "preset-save-label", t("preset_name")),
+      presetName,
+      el("label", "preset-save-label", t("preset_description")),
+      presetDescription,
+      presetStatus,
+      presetActions,
+    ],
+  });
+  const confirmSave = renderButton({ label: t("save"), variant: "fill" });
+  confirmSave.addEventListener("click", async () => {
+    if (!presetName.value.trim()) {
+      presetStatus.textContent = t("preset_name_required");
+      presetStatus.className = "preset-save-status err";
+      return;
+    }
+    confirmSave.disabled = true;
+    presetStatus.textContent = t("saving");
+    presetStatus.className = "preset-save-status";
+    try {
+      const saved = await store.savePreset(presetName.value, presetDescription.value);
+      presetStatus.textContent = t("preset_saved", { name: saved });
+      presetStatus.className = "preset-save-status ok";
+      presetSelect.setOptions(store.presets.map((preset) => ({ value: preset.name, label: preset.user ? `${preset.name} *` : preset.name })));
+      window.setTimeout(() => showModal(presetModal, false), 500);
+    } catch (error) {
+      presetStatus.textContent = String(error);
+      presetStatus.className = "preset-save-status err";
+    } finally {
+      confirmSave.disabled = false;
+    }
+  });
+  presetActions.append(confirmSave);
+  savePresetButton.addEventListener("click", () => {
+    presetName.value = store.presetName.startsWith("anima-") || store.presetName === "fast-preview" ? "" : store.presetName;
+    presetDescription.value = store.presetDescription();
+    presetStatus.textContent = t("preset_save_hint");
+    presetStatus.className = "preset-save-status";
+    showModal(presetModal, true);
+    presetName.focus();
+  });
+  presetRow.append(el("span", "flabel", t("preset")), presetSelect.root, savePresetButton, presetDesc);
 
   const grid = el("div", "param-grid");
   const inputs = new Map<string, HTMLInputElement>();
@@ -97,6 +152,11 @@ export function renderParamsView(store: Store): ParamsView {
   }
 
   const gpuStatus = el("div", "resource-status");
+  const gpuStatusText = el("span", "resource-status-text");
+  const retryGpu = el("button", "resource-retry", "RETRY GPU DOWNLOAD");
+  retryGpu.type = "button";
+  retryGpu.addEventListener("click", () => void store.setGpuEnabled(true));
+  gpuStatus.append(gpuStatusText, retryGpu);
   const validateStatus = el("div", "validate-status");
   let validationSeq = 0;
   async function runValidate(): Promise<void> {
@@ -140,28 +200,19 @@ export function renderParamsView(store: Store): ParamsView {
 
     const { gpu } = store;
     gpuStatus.className = `resource-status ${gpu.status === "error" ? "err" : gpu.status === "ready" ? "ok" : ""}`;
-    if (gpu.status === "idle") gpuStatus.textContent = "GPU RUNTIME — OFF";
-    else if (gpu.status === "checking") gpuStatus.textContent = "GPU RUNTIME — DETECTING";
-    else if (gpu.status === "downloading") gpuStatus.textContent = `GPU RUNTIME — DOWNLOADING ${gpu.progress}% ${gpu.message}`;
-    else if (gpu.status === "ready") gpuStatus.textContent = `GPU RUNTIME — READY · ${gpu.hardware?.gpu_name || gpu.hardware?.vendor || "GPU"}`;
-    else gpuStatus.textContent = `GPU RUNTIME — ERROR · ${gpu.message}`;
+    if (gpu.status === "idle") gpuStatusText.textContent = "GPU RUNTIME — OFF";
+    else if (gpu.status === "checking") gpuStatusText.textContent = "GPU RUNTIME — DETECTING";
+    else if (gpu.status === "downloading") gpuStatusText.textContent = `GPU RUNTIME — DOWNLOADING ${gpu.progress}% ${gpu.message}`;
+    else if (gpu.status === "ready") gpuStatusText.textContent = `GPU RUNTIME — READY · ${gpu.hardware?.gpu_name || gpu.hardware?.vendor || "GPU"}`;
+    else gpuStatusText.textContent = `GPU RUNTIME — ERROR · ${gpu.message}`;
+    retryGpu.hidden = gpu.status !== "error" || !gpu.runtime?.can_download;
   }
 
-  const retryGpu = el("button", "resource-retry", "RETRY GPU DOWNLOAD");
-  retryGpu.type = "button";
-  retryGpu.addEventListener("click", async () => {
-    try {
-      await gpuDownload();
-    } catch (error) {
-      gpuStatus.textContent = String(error);
-    }
-  });
-  gpuStatus.append(retryGpu);
   body.append(presetRow, grid, switchGrid, gpuStatus, validateStatus);
   const tag = `BUCKET ${store.config.resolution ?? 1024} // STEP ${store.config.bucket_step ?? 64}`;
   const panel = renderPanel({ code: "02", title: t("parameters"), tag, body: [body] });
   inner.append(panel);
-  root.append(inner);
+  root.append(inner, presetModal);
 
   const unsubscribe = store.subscribe(() => {
     render();

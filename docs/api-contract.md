@@ -59,8 +59,9 @@ stdout 只写协议帧；Python 日志输出到 **stderr**（Rust 单独线程�
 |---|---|---|---|
 | `config.defaults` | `{}` | `ExtractConfig` JSON schema `properties` | ✅ 真接通 |
 | `config.validate` | `{"config": {...}}` | `{"valid": bool, "errors": [{field, message}]}` | ✅ 真接通 |
-| `presets.list` | `{}` | `[{"name": str, "description": str}]` | ✅ 真接通 |
+| `presets.list` | `{}` | `[{"name": str, "description": str, "user": bool}]` | ✅ 真接通 |
 | `presets.load` | `{"name": str}` | `{...preset overrides...}`（`Partial<ExtractConfig>`，`description` 已剥离） | ✅ 真接通 |
+| `presets.save` | `{"name": str, "description": str, "config": {...}}` | `{"name", "description", "user": true, "path"}` | ✅ 用户目录持久化 |
 | `source.discover` | `{"path": str}` | `[video path string]` | ✅ 真接通 |
 | `source.probe` | `{"path": str}` | `VideoMeta` | ✅ 真接通 |
 | `extract.run` | `{"config": {...}}` | `{"started": true}`（事件流 `extract.progress/log/done/error`） | ✅ 真接通 |
@@ -94,6 +95,7 @@ stdout 只写协议帧；Python 日志输出到 **stderr**（Rust 单独线程�
 | `browse_folder` | – | `string \| null` | tauri dialog 插件 |
 | `list_presets` | – | `PresetInfo[]` | bridge `presets.list` |
 | `load_preset` | `{ name }` | `Partial<ExtractConfig>` | bridge `presets.load` |
+| `save_preset` | `{ name, description, config }` | `SavedPreset` | bridge `presets.save` |
 | `discover_videos` | `{ path }` | `string[]` | bridge `source.discover` |
 | `probe_video` | `{ path }` | `VideoMeta` | bridge `source.probe` |
 | `start_run` | `{ config }` | `null`（异步，事件推进） | bridge `extract.run` |
@@ -114,13 +116,13 @@ stdout 只写协议帧；Python 日志输出到 **stderr**（Rust 单独线程�
 ### 前端数据模型（`ui/src/api/types.ts`，由 Pydantic 生成）
 
 ```ts
-interface PresetInfo { name: string; description: string; }
+interface PresetInfo { name: string; description: string; user?: boolean; }
 interface Prefs { lang: "en" | "zh"; input?: string; output?: string; preset?: string; }
 interface VideoMeta { path: string; fps: number; frame_count: number; width: number; height: number; duration_s: number; }
 interface TaggerStatus { available: boolean; size_mb: number; }
 interface ReleaseInfo { tag: string; version: string; name: string; notes: string; exe_url: string | null; exe_size: number; }
 interface HardwareProfile { vendor: string; gpu_name: string; arch: string; compute_cap: number; os_name: string; os_arch: string; }
-interface RuntimeStatus { available: boolean; cached: boolean; version: string | null; cache_dir: string; size_mb: number; cuda_tag: string | null; }
+interface RuntimeStatus { available: boolean; cached: boolean; version: string | null; cache_dir: string; size_mb: number; cuda_tag: string | null; error?: string | null; can_download?: boolean; }
 ```
 
 ---

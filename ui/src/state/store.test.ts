@@ -15,6 +15,7 @@ vi.mock("../api/ipc", () => ({
     : { resolution: 768, bucket_step: 64, max_per_video: 10 }),
   probeVideo: vi.fn(),
   runTagger: vi.fn(),
+  savePreset: vi.fn(async (name: string, description: string) => ({ name, description, user: true, path: `/tmp/${name}.toml` })),
   startRun: vi.fn(),
   taggerDownload: vi.fn(),
   taggerStatus: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock("../api/ipc", () => ({
 
 import { Store } from "./store";
 import { loadPreset } from "../api/ipc";
+import { gpuDownload, gpuStatus, listPresets, savePreset, startRun } from "../api/ipc";
 
 describe("Store", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -65,5 +67,92 @@ describe("Store", () => {
 
     expect(store.presetName).toBe("fast-preview");
     expect(store.config.resolution).toBe(768);
+  });
+
+  it("saves current parameters without transient paths or segments", async () => {
+    vi.mocked(listPresets).mockResolvedValueOnce([]);
+    const store = new Store();
+    store.config = {
+      resolution: 768,
+      gpu_accel: true,
+      input: "/videos",
+      output: "/dataset",
+      segments: "ignored" as never,
+    };
+
+    await store.savePreset("my-v100", "GPU");
+
+    expect(savePreset).toHaveBeenCalledWith("my-v100", "GPU", {
+      resolution: 768,
+      gpu_accel: true,
+    });
+    expect(store.presetName).toBe("my-v100");
+    expect(store.presets).toEqual([
+      { name: "my-v100", description: "GPU", user: true, path: "/tmp/my-v100.toml" },
+    ]);
+  });
+
+  it("does not download when the current CUDA runtime is already available", async () => {
+    vi.mocked(gpuStatus).mockResolvedValue({
+      available: true,
+      cached: false,
+      version: null,
+      cache_dir: "/venv",
+      size_mb: 0,
+      cuda_tag: "cu126",
+      can_download: false,
+    });
+    const { gpuDetect } = await import("../api/ipc");
+    vi.mocked(gpuDetect).mockResolvedValue({
+      vendor: "NVIDIA", gpu_name: "Tesla V100", arch: "", compute_cap: 7.0,
+      os_name: "linux", os_arch: "x86_64",
+    });
+    const store = new Store();
+
+    await store.setGpuEnabled(true);
+
+    expect(store.gpu.status).toBe("ready");
+    expect(store.config.gpu_accel).toBe(true);
+    expect(gpuDownload).not.toHaveBeenCalled();
+  });
+
+  it("rechecks CUDA after download and disables the switch on activation failure", async () => {
+    vi.mocked(gpuStatus).mockResolvedValue({
+      available: false,
+      cached: true,
+      version: "broken",
+      cache_dir: "/cache",
+      size_mb: 800,
+      cuda_tag: "cu126",
+      error: "CUDA activation failed",
+      can_download: true,
+    });
+    const store = new Store();
+    store.config.gpu_accel = true;
+
+    await store.handleDownloadDone({ kind: "gpu" });
+
+    expect(store.gpu.status).toBe("error");
+    expect(store.config.gpu_accel).toBe(false);
+  });
+
+  it("does not start extraction when GPU was requested but CUDA is unavailable", async () => {
+    vi.mocked(gpuStatus).mockResolvedValue({
+      available: false,
+      cached: false,
+      version: null,
+      cache_dir: "/cache",
+      size_mb: 0,
+      cuda_tag: null,
+      error: "CUDA is unavailable",
+      can_download: false,
+    });
+    const store = new Store();
+    store.config.gpu_accel = true;
+
+    await expect(store.start()).rejects.toThrow("CUDA is unavailable");
+
+    expect(store.run.status).toBe("idle");
+    expect(startRun).not.toHaveBeenCalled();
   });
 });

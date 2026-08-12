@@ -67,7 +67,7 @@ def best_device() -> str:
 
 def is_gpu_pipeline_available() -> bool:
     """True if torch is installed AND a non-CPU device is available."""
-    return _HAS_TORCH and best_device() != "cpu"
+    return _ensure_torch() and best_device() != "cpu"
 
 
 def device_summary() -> str:

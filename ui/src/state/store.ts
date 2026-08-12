@@ -15,6 +15,7 @@ import {
   probeVideo,
   runTagger as invokeTagger,
   startRun,
+  savePreset as savePresetIpc,
   taggerDownload,
   taggerStatus,
 } from "../api/ipc";
@@ -23,6 +24,7 @@ import { RunState } from "./runState";
 export interface PresetInfo {
   name: string;
   description: string;
+  user?: boolean;
 }
 
 export interface Prefs {
@@ -133,6 +135,26 @@ export class Store {
     if (request !== this.presetRequest) return;
     this.config = config;
     this.notify();
+    if (config.gpu_accel) await this.setGpuEnabled(true);
+  }
+
+  async savePreset(name: string, description: string): Promise<string> {
+    const saved = await savePresetIpc(name, description, this.presetConfig());
+    const listed = await listPresets();
+    this.presets = listed.some((preset) => preset.name === saved.name)
+      ? listed
+      : [...listed, saved].sort((a, b) => a.name.localeCompare(b.name));
+    this.presetName = saved.name;
+    this.prefs.preset = saved.name;
+    this.notify();
+    return saved.name;
+  }
+
+  presetConfig(): Partial<ExtractConfig> {
+    const excluded = new Set(["input", "output", "segments", "dedup_index"]);
+    return Object.fromEntries(
+      Object.entries(this.config).filter(([key]) => !excluded.has(key)),
+    ) as Partial<ExtractConfig>;
   }
 
   setInputPath(p: string): void {
@@ -200,20 +222,22 @@ export class Store {
       this.notify();
       return;
     }
+    if (this.gpu.status === "checking" || this.gpu.status === "downloading") return;
 
     this.gpu = { ...this.gpu, status: "checking", progress: 0, message: "" };
     this.notify();
     try {
       const [hardware, runtime] = await Promise.all([gpuDetect(), gpuStatus()]);
       this.gpu = {
-        status: runtime.available ? "ready" : "downloading",
+        status: runtime.available ? "ready" : runtime.can_download ? "downloading" : "error",
         hardware,
         runtime,
         progress: runtime.available ? 100 : 0,
-        message: "",
+        message: runtime.error ?? "",
       };
       this.notify();
-      if (!runtime.available) await gpuDownload();
+      if (!runtime.available && runtime.can_download) await gpuDownload();
+      else if (!runtime.available) this.setParam("gpu_accel", false);
     } catch (error) {
       this.gpu = { ...this.gpu, status: "error", message: String(error) };
       this.setParam("gpu_accel", false);
@@ -304,14 +328,33 @@ export class Store {
     this.notify();
   }
 
-  handleDownloadDone(event: DownloadDone): void {
+  async handleDownloadDone(event: DownloadDone): Promise<void> {
     if (event.kind === "gpu") {
+      if (!event.error) {
+        try {
+          const runtime = await gpuStatus();
+          this.gpu = {
+            ...this.gpu,
+            runtime,
+            status: runtime.available ? "ready" : "error",
+            progress: runtime.available ? 100 : this.gpu.progress,
+            message: runtime.available ? "" : runtime.error ?? "CUDA runtime activation failed",
+          };
+          if (!runtime.available) this.setParam("gpu_accel", false);
+        } catch (error) {
+          this.gpu = { ...this.gpu, status: "error", message: String(error) };
+          this.setParam("gpu_accel", false);
+        }
+        this.notify();
+        return;
+      }
       this.gpu = {
         ...this.gpu,
-        status: event.error ? "error" : "ready",
-        progress: event.error ? this.gpu.progress : 100,
-        message: event.error ?? "",
+        status: "error",
+        progress: this.gpu.progress,
+        message: event.error,
       };
+      this.setParam("gpu_accel", false);
     } else {
       const pendingRun = this.tagger.pendingRun;
       this.tagger = {
@@ -387,6 +430,14 @@ export class Store {
   }
 
   async start(): Promise<void> {
+    if (this.config.gpu_accel) {
+      if (this.gpu.status !== "ready" || !this.gpu.runtime?.available) {
+        await this.setGpuEnabled(true);
+      }
+      if (this.gpu.status !== "ready" || !this.gpu.runtime?.available) {
+        throw new Error(this.gpu.message || "GPU acceleration was requested, but CUDA is not ready");
+      }
+    }
     this.run.start();
     await startRun(this.buildConfig() as ExtractConfig);
   }

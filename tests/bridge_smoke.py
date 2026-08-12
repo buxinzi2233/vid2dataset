@@ -8,6 +8,7 @@ behavior — all without touching the filesystem or launching long jobs.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Callable, Iterator
@@ -25,7 +26,9 @@ PYTHON = str(_venv) if _venv.exists() else sys.executable
 
 
 @pytest.fixture
-def proc() -> Iterator[Popen[str]]:
+def proc(tmp_path: Path) -> Iterator[Popen[str]]:
+    env = os.environ.copy()
+    env["VID2DATASET_PRESET_DIR"] = str(tmp_path / "presets")
     p = Popen(
         [PYTHON, "-u", str(BRIDGE)],
         stdin=subprocess.PIPE,
@@ -33,6 +36,7 @@ def proc() -> Iterator[Popen[str]]:
         stderr=subprocess.PIPE,
         text=True,
         bufsize=1,
+        env=env,
     )
     yield p
     p.kill()
@@ -79,6 +83,33 @@ def test_preset_load_unknown_errors(proc) -> None:
                              "params": {"name": "nope"}}])[0]
     assert resp["ok"] is False
     assert resp["error"]["code"] == "FileNotFoundError"
+
+
+def test_preset_save_round_trips_current_config(proc) -> None:
+    saved = _exchange(proc, [{
+        "id": 8,
+        "method": "presets.save",
+        "params": {
+            "name": "My V100 Settings",
+            "description": "GPU extraction",
+            "config": {"resolution": 768, "blur_threshold": 90.0, "gpu_accel": True},
+        },
+    }])[0]
+    assert saved["ok"] is True
+    assert saved["result"]["name"] == "my-v100-settings"
+    assert saved["result"]["user"] is True
+
+    loaded = _exchange(proc, [{
+        "id": 9,
+        "method": "presets.load",
+        "params": {"name": "my-v100-settings"},
+    }])[0]
+    assert loaded["ok"] is True
+    assert loaded["result"] == {
+        "resolution": 768,
+        "blur_threshold": 90.0,
+        "gpu_accel": True,
+    }
 
 
 def test_config_defaults_has_resolution(proc) -> None:
@@ -396,8 +427,16 @@ def test_gpu_status_returns_runtime_state(proc) -> None:
 def test_gpu_download_starts_immediately(proc) -> None:
     """gpu.download answers fast with `started`; actual download runs async."""
     resp = _exchange(proc, [{"id": 92, "method": "gpu.download", "params": {}}])[0]
-    assert resp["ok"] is True
-    assert resp["result"] == {"started": True}
+    if sys.platform == "win32":
+        assert resp["ok"] is True
+        assert resp["result"].get("started") in (True, False)
+    else:
+        # Linux source builds use the project CUDA environment directly. The
+        # sidecar must never download and unpack Windows wheels into its cache.
+        if resp["ok"]:
+            assert resp["result"] == {"started": False, "available": True}
+        else:
+            assert "only supported on Windows" in resp["error"]["message"]
 
 
 def test_update_check_returns_shape(proc) -> None:

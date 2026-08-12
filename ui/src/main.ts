@@ -65,6 +65,10 @@ async function enableBrowserPreview(): Promise<void> {
       const name = String((args as { args?: { name?: string } })?.args?.name ?? "anima-style");
       return previewConfigs[name] ?? previewConfigs["anima-style"];
     }
+    if (command === "save_preset") {
+      const name = String((args as { args?: { name?: string } })?.args?.name ?? "user-preset");
+      return { name, description: "", user: true, path: `/tmp/${name}.toml` };
+    }
     if (command === "config_validate") return { valid: true, errors: [] };
     if (command === "tagger_status") return { available: false, size_mb: 1200 };
     if (command === "check_update") return { available: false };

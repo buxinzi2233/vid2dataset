@@ -79,6 +79,15 @@ pub struct LoadPresetArgs {
     pub name: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavePresetArgs {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub config: Value,
+}
+
 #[tauri::command]
 pub fn load_preset(args: LoadPresetArgs, state: State<'_, AppState>) -> Result<Value, String> {
     let result = state
@@ -86,6 +95,24 @@ pub fn load_preset(args: LoadPresetArgs, state: State<'_, AppState>) -> Result<V
         .lock()
         .unwrap()
         .request("presets.load", json!({ "name": args.name }));
+    if result.ok {
+        Ok(result.result)
+    } else {
+        let e = result.error.unwrap_or_default();
+        Err(format!("{}: {}", e.code, e.message))
+    }
+}
+
+#[tauri::command]
+pub fn save_preset(args: SavePresetArgs, state: State<'_, AppState>) -> Result<Value, String> {
+    let result = state.bridge.lock().unwrap().request(
+        "presets.save",
+        json!({
+            "name": args.name,
+            "description": args.description,
+            "config": args.config,
+        }),
+    );
     if result.ok {
         Ok(result.result)
     } else {

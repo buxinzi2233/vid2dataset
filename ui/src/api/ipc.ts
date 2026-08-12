@@ -7,6 +7,12 @@ import type { ExtractConfig } from "./types";
 export interface PresetInfo {
   name: string;
   description: string;
+  user?: boolean;
+}
+
+export interface SavedPreset extends PresetInfo {
+  user: true;
+  path: string;
 }
 
 export function getVersion(): Promise<string> {
@@ -31,6 +37,10 @@ export function listPresets(): Promise<PresetInfo[]> {
 
 export function loadPreset(name: string): Promise<Partial<ExtractConfig>> {
   return invoke("load_preset", { args: { name } });
+}
+
+export function savePreset(name: string, description: string, config: Partial<ExtractConfig>): Promise<SavedPreset> {
+  return invoke("save_preset", { args: { name, description, config } });
 }
 
 export function configDefaults(): Promise<Record<string, unknown>> {
@@ -89,7 +99,7 @@ export function installUpdate(): Promise<{ installed: boolean; reason?: string }
   return invoke("install_update");
 }
 
-export function gpuDownload(): Promise<{ started: boolean }> {
+export function gpuDownload(): Promise<DownloadStart> {
   return invoke("gpu_download");
 }
 
@@ -155,6 +165,8 @@ export interface RuntimeStatus {
   cache_dir: string;
   size_mb: number;
   cuda_tag: string | null;
+  error?: string | null;
+  can_download?: boolean;
 }
 
 export function gpuDetect(): Promise<HardwareProfile> {
@@ -163,6 +175,12 @@ export function gpuDetect(): Promise<HardwareProfile> {
 
 export function gpuStatus(): Promise<RuntimeStatus> {
   return invoke("gpu_status");
+}
+
+export interface DownloadStart {
+  started: boolean;
+  available?: boolean;
+  downloading?: boolean;
 }
 
 export interface TaggerRunArgs {
@@ -188,7 +206,7 @@ export function taggerStatus(model: string): Promise<TaggerStatus> {
   return invoke("tagger_status", { args: { model } });
 }
 
-export function taggerDownload(model: string): Promise<{ started: boolean }> {
+export function taggerDownload(model: string): Promise<DownloadStart> {
   return invoke("tagger_download", { args: { model } });
 }
 

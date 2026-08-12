@@ -224,7 +224,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* Params */
 .preset-row { display: flex; min-width: 0; align-items: center; gap: 10px; margin-bottom: 14px; }
 .preset-row .flabel { color: var(--grey); font-family: var(--mono); font-size: 10px; }
+.preset-save { height: 30px; padding: 0 10px; font-size: 10px; }
 .preset-desc { min-width: 0; overflow: hidden; color: var(--grey); font-family: var(--mono); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.preset-save-label { display: block; margin: 8px 0 5px; color: var(--grey); font-family: var(--mono); font-size: 9px; }
+.preset-save-label + input { width: 100%; height: 30px; padding: 5px 8px; border: 1px solid var(--line); background: var(--field); color: var(--ink); font-family: var(--mono); font-size: 11px; }
+.preset-save-label + input:focus { border-color: var(--accent); outline: 0; }
+.preset-save-status { min-height: 30px; padding-top: 10px; color: var(--grey); font-family: var(--mono); font-size: 9px; }
+.preset-save-status.ok { color: var(--ink); }
+.preset-save-status.err { color: var(--alert); }
+.resource-status-text { min-width: 0; overflow-wrap: anywhere; }
+.resource-retry[hidden] { display: none; }
 .param-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); column-gap: 18px; row-gap: 8px; border-top: 1px solid var(--line); }
 .param-cell { padding-top: 8px; margin-bottom: 16px; }
 .param-cell:nth-child(n+5) { border-top: 1px solid var(--line); }
@@ -265,7 +274,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .resource-status, .validate-status { min-height: 15px; margin-top: 10px; color: var(--grey); font-family: var(--mono); font-size: 10px; overflow-wrap: anywhere; }
 .resource-status.ok, .validate-status.ok { color: var(--ink); }
 .resource-status.err, .validate-status.err { color: var(--alert); }
-.resource-retry { display: none; }
+.resource-retry { display: inline-flex; margin-left: 10px; }
 
 /* Caption */
 .cap-toggle { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }

@@ -24,7 +24,7 @@ from collections.abc import Callable
 from vid2dataset.config import ExtractConfig
 from vid2dataset.extractor import run_pipeline
 from vid2dataset.io_utils import discover_videos, probe_video
-from vid2dataset.presets import list_presets
+from vid2dataset.presets import list_preset_info
 
 log = logging.getLogger("bridge")
 
@@ -32,19 +32,40 @@ log = logging.getLogger("bridge")
 # Shared between extract.run (worker) and extract.cancel (reader thread).
 _cancel_event: threading.Event | None = None
 _run_lock = threading.Lock()
+_gpu_download_lock = threading.Lock()
+_gpu_download_active = False
 
 
 # ── Method handlers ─────────────────────────────────────────────────────
 
 
 def _presets(_params: dict) -> list[dict]:
-    return [{"name": n, "description": d} for n, d in list_presets()]
+    return [
+        {"name": name, "description": description, "user": user}
+        for name, description, user in list_preset_info()
+    ]
 
 
 def _preset_load(params: dict) -> dict:
     from vid2dataset.presets import load_preset
 
     return load_preset(params["name"])
+
+
+def _preset_save(params: dict) -> dict:
+    from vid2dataset.presets import save_preset
+
+    name, path = save_preset(
+        params["name"],
+        params.get("description", ""),
+        params.get("config", {}),
+    )
+    return {
+        "name": name,
+        "description": params.get("description", "").strip(),
+        "user": True,
+        "path": str(path),
+    }
 
 
 def _config_defaults(_params: dict) -> dict:
@@ -301,6 +322,8 @@ def _gpu_status(_params: dict) -> dict:
         "cache_dir": str(st.cache_dir),
         "size_mb": st.size_mb,
         "cuda_tag": st.cuda_tag,
+        "error": st.error,
+        "can_download": st.can_download,
     }
 
 
@@ -311,7 +334,20 @@ def _gpu_download(_params: dict) -> dict:
     ``download.progress`` ({pkg, current, total}); completion via
     ``download.done`` ({kind: "gpu", error?}).
     """
-    from vid2dataset.gpu_runtime import download_runtime
+    from vid2dataset.gpu_runtime import activate_runtime, download_runtime, runtime_status
+
+    global _gpu_download_active
+
+    with _gpu_download_lock:
+        if _gpu_download_active:
+            return {"started": False, "downloading": True}
+
+        status = runtime_status()
+        if status.available:
+            return {"started": False, "available": True}
+        if not status.can_download:
+            raise RuntimeError(status.error or "Automatic GPU runtime download is unavailable")
+        _gpu_download_active = True
 
     def progress_cb(pkg: str, done: int, total: int) -> None:
         _write({"event": "download.progress",
@@ -320,11 +356,23 @@ def _gpu_download(_params: dict) -> dict:
     def _worker() -> None:
         try:
             download_runtime(progress=progress_cb)
+            ok, error = activate_runtime()
+            if not ok:
+                raise RuntimeError(error)
             _write({"event": "download.done", "data": {"kind": "gpu"}})
         except Exception as e:  # noqa: BLE001 - surfaced as an event
             _write({"event": "download.done", "data": {"kind": "gpu", "error": str(e)}})
+        finally:
+            global _gpu_download_active
+            with _gpu_download_lock:
+                _gpu_download_active = False
 
-    threading.Thread(target=_worker, daemon=True).start()
+    try:
+        threading.Thread(target=_worker, daemon=True).start()
+    except Exception:
+        with _gpu_download_lock:
+            _gpu_download_active = False
+        raise
     return {"started": True}
 
 
@@ -463,6 +511,7 @@ METHODS: dict[str, Callable[[dict], object]] = {
     "config.validate": _config_validate,
     "presets.list": _presets,
     "presets.load": _preset_load,
+    "presets.save": _preset_save,
     "source.discover": _source_discover,
     "source.probe": _source_probe,
     "extract.run": _extract_run,

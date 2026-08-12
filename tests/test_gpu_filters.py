@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import numpy as np
 
+from vid2dataset import gpu_filters as gf
 from vid2dataset.gpu_filters import (
     BatchColorFilter,
     BatchSSIMFilter,
     best_device,
     device_summary,
+    is_gpu_pipeline_available,
     is_torch_available,
 )
 
@@ -29,6 +31,14 @@ def test_module_imports_without_torch() -> None:
 def test_best_device_returns_known_value() -> None:
     dev = best_device()
     assert dev in {"cpu", "cuda", "mps"}
+
+
+def test_gpu_availability_rechecks_after_runtime_activation(monkeypatch) -> None:
+    monkeypatch.setattr(gf, "_HAS_TORCH", False)
+    monkeypatch.setattr(gf, "_ensure_torch", lambda: True)
+    monkeypatch.setattr(gf, "best_device", lambda: "cuda")
+
+    assert is_gpu_pipeline_available() is True
 
 
 def test_ssim_filter_first_frame_always_diverse() -> None:

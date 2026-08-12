@@ -24,7 +24,11 @@ fn main() {
 
             // Spawn the Python sidecar. Tauri event names cannot contain dots,
             // so bridge events use colons only at the webview boundary.
-            let resource_dir = app.path().resource_dir().ok();
+            let resource_dir = if cfg!(debug_assertions) {
+                None
+            } else {
+                app.path().resource_dir().ok()
+            };
             let paths = bridge::default_sidecar_paths(resource_dir.as_deref());
             let bridge = Bridge::spawn(&paths, move |event_name, data| {
                 let webview_event = event_name.replace('.', ":");
@@ -47,6 +51,7 @@ fn main() {
             commands::browse_folder,
             commands::list_presets,
             commands::load_preset,
+            commands::save_preset,
             commands::config_defaults,
             commands::config_validate,
             commands::discover_videos,
