@@ -6,7 +6,12 @@ import { el } from "../components/el";
 import { t } from "../i18n";
 import type { Store } from "../state/store";
 
-export function renderRosterView(store: Store): HTMLElement {
+export interface RosterView {
+  root: HTMLElement;
+  refresh: () => Promise<void>;
+}
+
+export function renderRosterView(store: Store): RosterView {
   const root = document.createElement("div");
   root.className = "view inner";
 
@@ -25,8 +30,10 @@ export function renderRosterView(store: Store): HTMLElement {
     const path = store.inputPath;
     if (!path) {
       count.textContent = t("no_input");
+      count.className = "validate-status";
       return;
     }
+    count.className = "validate-status";
     try {
       const files = await discoverVideos(path);
       count.textContent = t("videos_found", { n: files.length });
@@ -48,5 +55,5 @@ export function renderRosterView(store: Store): HTMLElement {
   }
 
   void refresh();
-  return root;
+  return { root, refresh };
 }

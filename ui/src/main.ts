@@ -3,7 +3,7 @@ import { renderApp } from "./app";
 
 const root = document.getElementById("app");
 if (root) {
-  renderApp(root);
+  void renderApp(root);
 } else {
   throw new Error("missing #app mount point");
 }

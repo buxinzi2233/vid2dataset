@@ -63,8 +63,9 @@ export function renderParamsView(store: Store): HTMLElement {
     presetSelect.append(opt);
   }
   presetSelect.value = store.presetName || (store.presets[0]?.name ?? "");
-  presetSelect.addEventListener("change", async () => {
-    await store.applyPreset(presetSelect.value);
+  presetSelect.addEventListener("change", async (e) => {
+    const name = (e.target as HTMLSelectElement).value;
+    await store.applyPreset(name);
     renderGrid();
     renderSwitches();
     await runValidate();

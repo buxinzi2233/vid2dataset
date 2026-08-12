@@ -6,7 +6,7 @@ import { renderModal, showModal } from "./components/Modal";
 import { renderButton } from "./components/Button";import { renderSourceView } from "./views/SourceView";
 import { renderParamsView } from "./views/ParamsView";
 import { renderCaptionView } from "./views/CaptionView";
-import { renderRosterView } from "./views/RosterView";
+import { renderRosterView, type RosterView } from "./views/RosterView";
 import { renderExecuteView } from "./views/ExecuteView";
 import { applyHead } from "./theme/theme";
 import { applyTokenVars, SHELL } from "./theme/tokens";
@@ -155,31 +155,32 @@ function buildAboutModal(onClose: () => void): HTMLElement {
   return renderModal({ title: "ABOUT", tag: "RL-EXTRACT-OS", width: 420, body: [body], onClose });
 }
 
-function buildViewport(store: Store): HTMLElement {
+function buildViewport(store: Store): { viewport: HTMLElement; roster: RosterView } {
   const viewport = el("main", "viewport");
+  const roster = renderRosterView(store);
   viewport.append(
     renderSourceView(store),
     renderParamsView(store),
     renderCaptionView(store),
-    renderRosterView(store),
+    roster.root,
     renderExecuteView(store),
   );
-  return viewport;
+  return { viewport, roster };
 }
 
-export function renderApp(root: HTMLElement): void {
+export async function renderApp(root: HTMLElement): Promise<void> {
   applyTokenVars();
   applyHead("dark");
 
   const store = new Store();
-  void store.init();
+  await store.init();
 
   const aboutModal = buildAboutModal(() => showModal(aboutModal, false));
   document.body.append(aboutModal);
 
   const app = el("div", "app");
   const work = el("div", "work");
-  const viewport = buildViewport(store);
+  const { viewport, roster } = buildViewport(store);
   const views = viewport.querySelectorAll<HTMLElement>(".view");
   const viewByKey: Record<string, HTMLElement> = {};
   const keys = ["source", "params", "caption", "roster", "execute"];
@@ -187,6 +188,7 @@ export function renderApp(root: HTMLElement): void {
 
   const switchView = (key: string): void => {
     Object.entries(viewByKey).forEach(([k, v]) => v.classList.toggle("active", k === key));
+    if (key === "roster") void roster.refresh();
   };
 
   const runFromTop = (): void => {
