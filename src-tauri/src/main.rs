@@ -13,15 +13,22 @@ use state::AppState;
 
 fn main() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_log::Builder::default().level(log::LevelFilter::Info).build())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_log::Builder::default()
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
         .setup(|app| {
             let handle = app.handle().clone();
 
-            // Spawn the Python sidecar. Event frames from the bridge are
-            // re-emitted verbatim to the webview under the same event name.
-            let (python, script) = bridge::default_sidecar_paths();
-            let bridge = Bridge::spawn(&python, &script, move |event_name, data| {
-                let _ = handle.emit(event_name, data);
+            // Spawn the Python sidecar. Tauri event names cannot contain dots,
+            // so bridge events use colons only at the webview boundary.
+            let resource_dir = app.path().resource_dir().ok();
+            let paths = bridge::default_sidecar_paths(resource_dir.as_deref());
+            let bridge = Bridge::spawn(&paths, move |event_name, data| {
+                let webview_event = event_name.replace('.', ":");
+                let _ = handle.emit(&webview_event, data);
             })
             .map_err(|e| format!("failed to spawn sidecar: {e}"))?;
 

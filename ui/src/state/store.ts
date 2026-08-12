@@ -2,7 +2,22 @@
 //! Prefs live here (merged into the store) to avoid a one-function module.
 
 import type { ExtractConfig } from "../api/types";
-import { cancelRun, listPresets, loadPreset, startRun } from "../api/ipc";
+import type { DownloadDone, DownloadProgress, TaggerDone } from "../api/events";
+import type { HardwareProfile, RuntimeStatus, TaggerStatus, VideoMeta } from "../api/ipc";
+import {
+  cancelRun,
+  discoverVideos,
+  gpuDetect,
+  gpuDownload,
+  gpuStatus,
+  listPresets,
+  loadPreset,
+  probeVideo,
+  runTagger as invokeTagger,
+  startRun,
+  taggerDownload,
+  taggerStatus,
+} from "../api/ipc";
 import { RunState } from "./runState";
 
 export interface PresetInfo {
@@ -17,9 +32,36 @@ export interface Prefs {
   preset?: string;
 }
 
+export interface VideoEntry {
+  path: string;
+  name: string;
+  meta: VideoMeta | null;
+  probeError?: string;
+}
+
 export interface Segment {
   start: number;
   end: number;
+}
+
+export type ResourceState = "idle" | "checking" | "missing" | "downloading" | "ready" | "running" | "done" | "error";
+
+export interface GpuState {
+  status: ResourceState;
+  hardware: HardwareProfile | null;
+  runtime: RuntimeStatus | null;
+  progress: number;
+  message: string;
+}
+
+export interface TaggerState {
+  status: ResourceState;
+  model: string;
+  info: TaggerStatus | null;
+  progress: number;
+  message: string;
+  result: TaggerDone | null;
+  pendingRun: boolean;
 }
 
 type Listener = () => void;
@@ -32,30 +74,73 @@ export class Store {
   lang: "en" | "zh" = "zh";
   prefs: Prefs = { lang: "zh" };
   presetName = "";
-  selectedParam: string | null = null;
+  selectedParam: string | null = "resolution";
+  inspectorOpen = false;
+  videos: VideoEntry[] = [];
+  selectedVideo: string | null = null;
+  rosterStatus = "";
+  rosterLoading = false;
+  headTheme: "dark" | "light" = "dark";
+  zoom = 1;
+  gpu: GpuState = {
+    status: "idle",
+    hardware: null,
+    runtime: null,
+    progress: 0,
+    message: "",
+  };
+  tagger: TaggerState = {
+    status: "idle",
+    model: "wd-eva02-large-tagger-v3",
+    info: null,
+    progress: 0,
+    message: "",
+    result: null,
+    pendingRun: false,
+  };
   segments: Record<string, Segment[]> = {};
-  run = new RunState();
-  private listeners: Listener[] = [];
+  run: RunState;
+  private listeners = new Set<Listener>();
+  private presetRequest = 0;
 
-  subscribe(fn: Listener): void {
-    this.listeners.push(fn);
+  constructor() {
+    this.run = new RunState(() => this.notify());
+  }
+
+  subscribe(fn: Listener): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
   }
 
   private notify(): void {
-    for (const fn of this.listeners) fn();
+    for (const fn of [...this.listeners]) fn();
   }
 
   async init(): Promise<void> {
     this.presets = await listPresets();
+    const initial = this.presets.some((preset) => preset.name === "anima-style")
+      ? "anima-style"
+      : this.presets[0]?.name;
+    if (initial) await this.applyPreset(initial);
   }
 
   async applyPreset(name: string): Promise<void> {
+    const request = ++this.presetRequest;
     this.presetName = name;
-    this.config = await loadPreset(name);
+    this.prefs.preset = name;
+    this.notify();
+    const config = await loadPreset(name);
+    if (request !== this.presetRequest) return;
+    this.config = config;
     this.notify();
   }
 
   setInputPath(p: string): void {
+    if (p !== this.inputPath) {
+      this.videos = [];
+      this.selectedVideo = null;
+      this.rosterStatus = "";
+    }
     this.inputPath = p;
     this.prefs.input = p;
     this.notify();
@@ -70,16 +155,222 @@ export class Store {
   setLang(lang: "en" | "zh"): void {
     this.lang = lang;
     this.prefs.lang = lang;
+    this.notify();
   }
 
-  setParam(key: string, value: string | number | boolean): void {
+  setParam(key: string, value: string | number | boolean | null): void {
     this.config = { ...this.config, [key]: value };
     this.notify();
   }
 
-  selectParam(key: string | null): void {
+  selectParam(key: string | null, openInspector = false): void {
     this.selectedParam = key;
+    if (openInspector) this.inspectorOpen = true;
     this.notify();
+  }
+
+  setInspectorOpen(open: boolean): void {
+    this.inspectorOpen = open;
+    this.notify();
+  }
+
+  selectVideo(path: string): void {
+    this.selectedVideo = path;
+    this.notify();
+  }
+
+  setHeadTheme(theme: "dark" | "light"): void {
+    this.headTheme = theme;
+    this.notify();
+  }
+
+  setZoom(zoom: number): void {
+    this.zoom = zoom;
+    this.notify();
+  }
+
+  presetDescription(): string {
+    return this.presets.find((preset) => preset.name === this.presetName)?.description ?? "";
+  }
+
+  async setGpuEnabled(enabled: boolean): Promise<void> {
+    this.setParam("gpu_accel", enabled);
+    if (!enabled) {
+      this.gpu = { status: "idle", hardware: null, runtime: null, progress: 0, message: "" };
+      this.notify();
+      return;
+    }
+
+    this.gpu = { ...this.gpu, status: "checking", progress: 0, message: "" };
+    this.notify();
+    try {
+      const [hardware, runtime] = await Promise.all([gpuDetect(), gpuStatus()]);
+      this.gpu = {
+        status: runtime.available ? "ready" : "downloading",
+        hardware,
+        runtime,
+        progress: runtime.available ? 100 : 0,
+        message: "",
+      };
+      this.notify();
+      if (!runtime.available) await gpuDownload();
+    } catch (error) {
+      this.gpu = { ...this.gpu, status: "error", message: String(error) };
+      this.setParam("gpu_accel", false);
+      this.notify();
+    }
+  }
+
+  async inspectTagger(model: string): Promise<void> {
+    if (this.tagger.model === model && ["checking", "downloading", "running"].includes(this.tagger.status)) return;
+    this.tagger = {
+      ...this.tagger,
+      status: "checking",
+      model,
+      info: null,
+      progress: 0,
+      message: "",
+      result: null,
+      pendingRun: false,
+    };
+    this.notify();
+    try {
+      const info = await taggerStatus(model);
+      this.tagger = { ...this.tagger, info, status: info.available ? "ready" : "missing" };
+    } catch (error) {
+      this.tagger = { ...this.tagger, status: "error", message: String(error) };
+    }
+    this.notify();
+  }
+
+  async startTagger(): Promise<void> {
+    if (!this.outputPath) {
+      this.tagger = { ...this.tagger, status: "error", message: "no-output" };
+      this.notify();
+      return;
+    }
+    if (this.tagger.status === "checking" || this.tagger.status === "downloading" || this.tagger.status === "running") return;
+    if (!this.tagger.info?.available) {
+      this.tagger = { ...this.tagger, status: "downloading", pendingRun: true, progress: 0, message: "" };
+      this.notify();
+      try {
+        await taggerDownload(this.tagger.model);
+      } catch (error) {
+        this.tagger = { ...this.tagger, status: "error", pendingRun: false, message: String(error) };
+        this.notify();
+      }
+      return;
+    }
+
+    this.tagger = { ...this.tagger, status: "running", progress: 0, message: "", result: null };
+    this.notify();
+    try {
+      await invokeTagger({
+        folder: this.outputPath,
+        modelName: this.tagger.model,
+        triggerWord: String(this.config.trigger_word ?? ""),
+        blacklist: String(this.config.tag_blacklist ?? ""),
+        require: String(this.config.tag_require ?? ""),
+        exclude: String(this.config.tag_exclude ?? ""),
+        always: String(this.config.tag_always ?? ""),
+        traitPruneThreshold: Number(this.config.trait_prune_threshold ?? 0),
+        generalThreshold: Number(this.config.tag_general_threshold ?? 0.35),
+        characterThreshold: Number(this.config.tag_character_threshold ?? 0.85),
+        useGpu: Boolean(this.config.gpu_accel),
+      });
+    } catch (error) {
+      this.tagger = { ...this.tagger, status: "error", message: String(error) };
+      this.notify();
+    }
+  }
+
+  setTaggerProgress(current: number, total: number): void {
+    this.tagger = {
+      ...this.tagger,
+      status: "running",
+      progress: total > 0 ? Math.round((current / total) * 100) : 0,
+    };
+    this.notify();
+  }
+
+  handleDownloadProgress(event: DownloadProgress): void {
+    const progress = event.total > 0 ? Math.round((event.current / event.total) * 100) : 0;
+    const target = event.pkg.toLowerCase().includes("tag") || this.tagger.status === "downloading" ? "tagger" : "gpu";
+    if (target === "tagger") {
+      this.tagger = { ...this.tagger, status: "downloading", progress, message: event.pkg };
+    } else {
+      this.gpu = { ...this.gpu, status: "downloading", progress, message: event.pkg };
+    }
+    this.notify();
+  }
+
+  handleDownloadDone(event: DownloadDone): void {
+    if (event.kind === "gpu") {
+      this.gpu = {
+        ...this.gpu,
+        status: event.error ? "error" : "ready",
+        progress: event.error ? this.gpu.progress : 100,
+        message: event.error ?? "",
+      };
+    } else {
+      const pendingRun = this.tagger.pendingRun;
+      this.tagger = {
+        ...this.tagger,
+        status: event.error ? "error" : "ready",
+        info: event.error ? this.tagger.info : { available: true, size_mb: this.tagger.info?.size_mb ?? 0 },
+        progress: event.error ? this.tagger.progress : 100,
+        message: event.error ?? "",
+        pendingRun: false,
+      };
+      if (!event.error && pendingRun) void this.startTagger();
+    }
+    this.notify();
+  }
+
+  handleTaggerDone(result: TaggerDone): void {
+    this.tagger = {
+      ...this.tagger,
+      status: result.error ? "error" : result.cancelled ? "idle" : "done",
+      progress: result.error ? this.tagger.progress : 100,
+      result,
+      message: result.error ?? "",
+    };
+    this.notify();
+  }
+
+  async refreshVideos(): Promise<void> {
+    if (!this.inputPath) {
+      this.videos = [];
+      this.rosterStatus = "no-input";
+      this.notify();
+      return;
+    }
+
+    this.rosterLoading = true;
+    this.rosterStatus = "loading";
+    this.notify();
+    try {
+      const paths = await discoverVideos(this.inputPath);
+      const entries = await Promise.all(paths.map(async (path): Promise<VideoEntry> => {
+        const name = path.split(/[\\/]/).pop() ?? path;
+        try {
+          return { path, name, meta: await probeVideo(path) };
+        } catch (error) {
+          return { path, name, meta: null, probeError: String(error) };
+        }
+      }));
+      this.videos = entries;
+      this.rosterStatus = entries.length ? "ready" : "empty";
+      if (this.selectedVideo && !entries.some((entry) => entry.path === this.selectedVideo)) {
+        this.selectedVideo = null;
+      }
+    } catch (error) {
+      this.videos = [];
+      this.rosterStatus = `error:${String(error)}`;
+    } finally {
+      this.rosterLoading = false;
+      this.notify();
+    }
   }
 
   buildConfig(): Partial<ExtractConfig> & { input: string; output: string } {
@@ -96,12 +387,17 @@ export class Store {
   }
 
   async start(): Promise<void> {
-    this.run.setStatus("running");
+    this.run.start();
     await startRun(this.buildConfig() as ExtractConfig);
   }
 
   async cancel(): Promise<void> {
     this.run.setStatus("cancelling");
-    await cancelRun();
+    try {
+      await cancelRun();
+    } catch (error) {
+      this.run.setStatus("running");
+      throw error;
+    }
   }
 }

@@ -29,10 +29,8 @@ export const HEAD = {
 
 export type HeadTheme = keyof typeof HEAD;
 
-/** App shell geometry (desktop design canvas). */
+/** App shell geometry. The shell itself always fills the Tauri viewport. */
 export const SHELL = {
-  designW: 1440,
-  designH: 900,
   topBarH: 64,
   railW: 200,
   railCollapsedW: 28,

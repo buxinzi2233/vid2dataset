@@ -84,11 +84,9 @@ fn default_true() -> bool {
 /// `extract.progress` (`stage="tag:tagging"`) / `tagger.done` events.
 #[tauri::command]
 pub fn tagger_run(args: TaggerRunArgs, state: State<'_, AppState>) -> Result<Value, String> {
-    let result = state
-        .bridge
-        .lock()
-        .unwrap()
-        .request("tagger.run", json!({
+    let result = state.bridge.lock().unwrap().request(
+        "tagger.run",
+        json!({
             "folder": args.folder,
             "model_name": args.model_name,
             "trigger_word": args.trigger_word,
@@ -100,7 +98,8 @@ pub fn tagger_run(args: TaggerRunArgs, state: State<'_, AppState>) -> Result<Val
             "general_threshold": args.general_threshold,
             "character_threshold": args.character_threshold,
             "use_gpu": args.use_gpu,
-        }));
+        }),
+    );
     if result.ok {
         Ok(result.result)
     } else {
@@ -111,7 +110,11 @@ pub fn tagger_run(args: TaggerRunArgs, state: State<'_, AppState>) -> Result<Val
 
 #[tauri::command]
 pub fn gpu_detect(state: State<'_, AppState>) -> Result<Value, String> {
-    let result = state.bridge.lock().unwrap().request("gpu.detect", json!({}));
+    let result = state
+        .bridge
+        .lock()
+        .unwrap()
+        .request("gpu.detect", json!({}));
     if result.ok {
         Ok(result.result)
     } else {
@@ -122,7 +125,11 @@ pub fn gpu_detect(state: State<'_, AppState>) -> Result<Value, String> {
 
 #[tauri::command]
 pub fn gpu_status(state: State<'_, AppState>) -> Result<Value, String> {
-    let result = state.bridge.lock().unwrap().request("gpu.status", json!({}));
+    let result = state
+        .bridge
+        .lock()
+        .unwrap()
+        .request("gpu.status", json!({}));
     if result.ok {
         Ok(result.result)
     } else {
@@ -135,7 +142,11 @@ pub fn gpu_status(state: State<'_, AppState>) -> Result<Value, String> {
 /// `download.progress` / `download.done` events.
 #[tauri::command]
 pub fn gpu_download(state: State<'_, AppState>) -> Result<Value, String> {
-    let result = state.bridge.lock().unwrap().request("gpu.download", json!({}));
+    let result = state
+        .bridge
+        .lock()
+        .unwrap()
+        .request("gpu.download", json!({}));
     if result.ok {
         Ok(result.result)
     } else {

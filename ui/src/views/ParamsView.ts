@@ -1,137 +1,177 @@
-//! Params view: preset select + parameter grid + switches + validation status.
-
+import { gpuDownload } from "../api/ipc";
 import { renderPanel } from "../components/Panel";
 import { renderSwitch } from "../components/Switch";
-import { validateConfig } from "../api/ipc";
+import { renderSelectMenu } from "../components/SelectMenu";
 import { el } from "../components/el";
 import { t } from "../i18n";
+import { PARAMS, SWITCHES, parseParamValue } from "../state/paramMeta";
 import type { Store } from "../state/store";
+import { validateConfig } from "../api/ipc";
 
-const PARAMS: { key: string; label: string }[] = [
-  { key: "resolution", label: "Resolution" },
-  { key: "blur_threshold", label: "Blur threshold" },
-  { key: "max_per_video", label: "Max per video" },
-  { key: "min_per_video", label: "Min per video" },
-  { key: "phash_distance", label: "Dedup distance" },
-  { key: "ssim_threshold", label: "SSIM diversity" },
-  { key: "color_distance", label: "Color distance" },
-  { key: "frames_per_scene", label: "Frames / scene" },
-];
+export interface ParamsView {
+  root: HTMLElement;
+  destroy: () => void;
+}
 
-const SWITCHES: { key: string; label: string }[] = [
-  { key: "auto_quality", label: "Auto blur threshold" },
-  { key: "keyframe", label: "Keyframe mode (fast)" },
-  { key: "subject_size_filter", label: "Subject size filter" },
-  { key: "detect_watermark", label: "Detect watermarks" },
-  { key: "crop_watermark", label: "Crop watermarks" },
-  { key: "flatten_output", label: "Flatten output" },
-  { key: "gpu_accel", label: "GPU acceleration" },
-];
-
-export function renderParamsView(store: Store): HTMLElement {
-  const root = document.createElement("div");
-  root.className = "view inner";
-
-  const status = el("div", "validate-status");
-
-  async function runValidate(): Promise<void> {
-    try {
-      const result = await validateConfig(store.config);
-      if (result.valid) {
-        status.textContent = "CONFIG — VALID";
-        status.className = "validate-status ok";
-      } else {
-        status.textContent = `CONFIG — INVALID: ${result.errors
-          .map((e) => `${e.field} ${e.message}`)
-          .join("; ")}`;
-        status.className = "validate-status err";
-      }
-    } catch (e) {
-      status.textContent = `CONFIG — error: ${String(e)}`;
-      status.className = "validate-status err";
-    }
-  }
-
-  // Preset selector
+export function renderParamsView(store: Store): ParamsView {
+  const root = el("section", "view");
+  root.dataset.view = "params";
+  const inner = el("div", "inner");
+  const body = el("div");
   const presetRow = el("div", "preset-row");
-  presetRow.append(el("span", "flabel", t("preset")));
-  const presetSelect = el("select", "menu");
-  for (const p of store.presets) {
-    const opt = document.createElement("option");
-    opt.value = p.name;
-    opt.textContent = p.name;
-    presetSelect.append(opt);
-  }
-  presetSelect.value = store.presetName || (store.presets[0]?.name ?? "");
-  presetSelect.addEventListener("change", async (e) => {
-    const name = (e.target as HTMLSelectElement).value;
-    await store.applyPreset(name);
-    renderGrid();
-    renderSwitches();
-    await runValidate();
+  const presetSelect = renderSelectMenu({
+    options: store.presets.map((preset) => ({ value: preset.name, label: preset.name })),
+    value: store.presetName,
+    className: "preset-select",
+    ariaLabel: t("preset"),
+    onChange: (value) => void store.applyPreset(value),
   });
-  presetRow.append(presetSelect);
+  presetSelect.root.dataset.preset = "params";
+  const presetDesc = el("span", "preset-desc");
+  presetRow.append(el("span", "flabel", t("preset")), presetSelect.root, presetDesc);
 
-  // Parameter grid
   const grid = el("div", "param-grid");
-
-  function renderGrid(): void {
-    grid.innerHTML = "";
-    PARAMS.forEach((p, i) => {
-      const cell = el("div", "param-cell");
-      cell.append(el("div", "pcode", `P.${String(i + 1).padStart(2, "0")}`));
-      const labelRow = el("div", "plabel");
-      labelRow.append(el("span", undefined, p.label));
-      const input = el("input");
-      input.type = "text";
-      input.value = String(store.config[p.key as keyof typeof store.config] ?? "");
-      input.addEventListener("input", () => {
-        store.setParam(p.key, parseParam(input.value, p.key));
-        void runValidate();
-      });
-      input.addEventListener("focus", () => store.selectParam(p.key));
-      cell.append(labelRow, input);
-      grid.append(cell);
+  const inputs = new Map<string, HTMLInputElement>();
+  for (const [index, meta] of PARAMS.entries()) {
+    const cell = el("div", "param-cell");
+    cell.dataset.param = meta.key;
+    cell.append(el("div", "pcode", `P.${String(index + 1).padStart(2, "0")}`));
+    const label = el("div", "plabel");
+    const info = el("button", "pinfo", "?");
+    info.type = "button";
+    info.title = meta.tip;
+    info.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const same = store.selectedParam === meta.key && store.inspectorOpen;
+      store.selectParam(meta.key);
+      store.setInspectorOpen(!same);
     });
+    label.append(el("span", undefined, meta.label), info);
+    const input = el("input");
+    input.inputMode = "decimal";
+    input.addEventListener("focus", () => store.selectParam(meta.key, true));
+    input.addEventListener("input", () => {
+      store.setParam(meta.key, parseParamValue(input.value, meta) as string | number);
+      void runValidate();
+    });
+    cell.addEventListener("click", () => store.selectParam(meta.key, true));
+    cell.append(label, input);
+    grid.append(cell);
+    inputs.set(meta.key, input);
   }
 
-  function parseParam(raw: string, key: string): string | number {
-    if (["resolution", "max_per_video", "min_per_video", "phash_distance", "frames_per_scene"].includes(key)) {
-      const n = parseInt(raw, 10);
-      return Number.isNaN(n) ? raw : n;
-    }
-    if (["blur_threshold", "ssim_threshold", "color_distance"].includes(key)) {
-      const n = parseFloat(raw);
-      return Number.isNaN(n) ? raw : n;
-    }
-    return raw;
-  }
-
-  // Switches
   const switchGrid = el("div", "switch-grid");
-
-  function renderSwitches(): void {
-    switchGrid.innerHTML = "";
-    SWITCHES.forEach((s) => {
-      switchGrid.append(
-        renderSwitch({
-          label: s.label,
-          checked: Boolean(store.config[s.key as keyof typeof store.config]),
-          onChange: (on) => {
-            store.setParam(s.key, on);
-            void runValidate();
-          },
-        }),
-      );
+  const switchControls = new Map<string, HTMLElement>();
+  for (const [index, item] of SWITCHES.entries()) {
+    const checked = item.key === "decode_mode"
+      ? store.config.decode_mode === "keyframe"
+      : Boolean(store.config[item.key as keyof typeof store.config]);
+    const control = renderSwitch({
+      key: item.key,
+      label: item.label,
+      checked,
+      onChange: (on) => {
+        store.selectParam(item.key, true);
+        if (item.key === "gpu_accel") void store.setGpuEnabled(on);
+        else if (item.key === "decode_mode") store.setParam("decode_mode", on ? "keyframe" : "accurate");
+        else store.setParam(item.key, on);
+        void runValidate();
+      },
     });
+    control.title = item.tip;
+    const info = el("button", "pinfo sinfo", "?");
+    info.type = "button";
+    info.title = item.tip;
+    info.setAttribute("aria-label", `${item.label} ${t("inspect")}`);
+    info.addEventListener("click", () => {
+      const same = store.selectedParam === item.key && store.inspectorOpen;
+      store.selectParam(item.key);
+      store.setInspectorOpen(!same);
+    });
+    const itemWrap = el("div", "switch-item");
+    itemWrap.dataset.switchParam = item.key;
+    itemWrap.dataset.switchCode = `S.${String(index + 1).padStart(2, "0")}`;
+    itemWrap.append(control, info);
+    switchControls.set(item.key, itemWrap);
+    switchGrid.append(itemWrap);
   }
 
-  renderGrid();
-  renderSwitches();
-  void runValidate();
+  const gpuStatus = el("div", "resource-status");
+  const validateStatus = el("div", "validate-status");
+  let validationSeq = 0;
+  async function runValidate(): Promise<void> {
+    const seq = ++validationSeq;
+    try {
+      const result = await validateConfig(store.buildConfig());
+      if (seq !== validationSeq) return;
+      validateStatus.className = `validate-status ${result.valid ? "ok" : "err"}`;
+      validateStatus.textContent = result.valid
+        ? "CONFIG — VALID"
+        : `CONFIG — INVALID: ${result.errors.map((error) => `${error.field} ${error.message}`).join("; ")}`;
+    } catch (error) {
+      if (seq !== validationSeq) return;
+      validateStatus.className = "validate-status err";
+      validateStatus.textContent = `CONFIG — ${String(error)}`;
+    }
+  }
 
-  const body = el("div", "");
-  body.append(presetRow, grid, switchGrid, status);
-  root.append(renderPanel({ code: "02", title: t("parameters"), tag: "BUCKET 1024 // STEP 64", body: [body] }));
-  return root;
+  function render(): void {
+    presetSelect.setValue(store.presetName);
+    presetDesc.textContent = store.presetDescription();
+    for (const meta of PARAMS) {
+      const input = inputs.get(meta.key);
+      if (input && document.activeElement !== input) {
+        const raw = store.config[meta.key as keyof typeof store.config];
+        input.value = raw === null || raw === undefined ? "0" : String(raw);
+      }
+      input?.closest(".param-cell")?.classList.toggle("selected", store.selectedParam === meta.key);
+    }
+    for (const item of SWITCHES) {
+      const on = item.key === "decode_mode"
+        ? store.config.decode_mode === "keyframe"
+        : Boolean(store.config[item.key as keyof typeof store.config]);
+      const itemWrap = switchControls.get(item.key);
+      itemWrap?.classList.toggle("selected", store.selectedParam === item.key);
+      const control = itemWrap?.querySelector<HTMLLabelElement>(".sw");
+      control?.classList.toggle("on", on);
+      const checkbox = itemWrap?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+      if (checkbox) checkbox.checked = on;
+    }
+
+    const { gpu } = store;
+    gpuStatus.className = `resource-status ${gpu.status === "error" ? "err" : gpu.status === "ready" ? "ok" : ""}`;
+    if (gpu.status === "idle") gpuStatus.textContent = "GPU RUNTIME — OFF";
+    else if (gpu.status === "checking") gpuStatus.textContent = "GPU RUNTIME — DETECTING";
+    else if (gpu.status === "downloading") gpuStatus.textContent = `GPU RUNTIME — DOWNLOADING ${gpu.progress}% ${gpu.message}`;
+    else if (gpu.status === "ready") gpuStatus.textContent = `GPU RUNTIME — READY · ${gpu.hardware?.gpu_name || gpu.hardware?.vendor || "GPU"}`;
+    else gpuStatus.textContent = `GPU RUNTIME — ERROR · ${gpu.message}`;
+  }
+
+  const retryGpu = el("button", "resource-retry", "RETRY GPU DOWNLOAD");
+  retryGpu.type = "button";
+  retryGpu.addEventListener("click", async () => {
+    try {
+      await gpuDownload();
+    } catch (error) {
+      gpuStatus.textContent = String(error);
+    }
+  });
+  gpuStatus.append(retryGpu);
+  body.append(presetRow, grid, switchGrid, gpuStatus, validateStatus);
+  const tag = `BUCKET ${store.config.resolution ?? 1024} // STEP ${store.config.bucket_step ?? 64}`;
+  const panel = renderPanel({ code: "02", title: t("parameters"), tag, body: [body] });
+  inner.append(panel);
+  root.append(inner);
+
+  const unsubscribe = store.subscribe(() => {
+    render();
+    const headerTag = panel.querySelector<HTMLElement>(".ptag");
+    if (headerTag) headerTag.textContent = `BUCKET ${store.config.resolution ?? 1024} // STEP ${store.config.bucket_step ?? 64}`;
+  });
+  render();
+  void runValidate();
+  return { root, destroy: () => {
+    unsubscribe();
+    presetSelect.destroy();
+  } };
 }

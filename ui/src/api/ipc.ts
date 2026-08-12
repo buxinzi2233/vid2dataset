@@ -18,7 +18,11 @@ export function getLang(): Promise<string> {
 }
 
 export function setLang(lang: string): Promise<void> {
-  return invoke("set_lang", { lang });
+  return invoke("set_lang", { args: { lang } });
+}
+
+export function browseFolder(): Promise<string | null> {
+  return invoke("browse_folder");
 }
 
 export function listPresets(): Promise<PresetInfo[]> {
@@ -26,7 +30,7 @@ export function listPresets(): Promise<PresetInfo[]> {
 }
 
 export function loadPreset(name: string): Promise<Partial<ExtractConfig>> {
-  return invoke("load_preset", { name });
+  return invoke("load_preset", { args: { name } });
 }
 
 export function configDefaults(): Promise<Record<string, unknown>> {
@@ -44,15 +48,19 @@ export interface ValidateResult {
 }
 
 export function validateConfig(config: Partial<ExtractConfig>): Promise<ValidateResult> {
-  return invoke("config_validate", { config });
+  return invoke("config_validate", { args: { config } });
 }
 
 export function discoverVideos(path: string): Promise<string[]> {
-  return invoke("discover_videos", { path });
+  return invoke("discover_videos", { args: { path } });
+}
+
+export function probeVideo(path: string): Promise<VideoMeta> {
+  return invoke("probe_video", { args: { path } });
 }
 
 export function startRun(config: ExtractConfig): Promise<{ started: boolean }> {
-  return invoke("start_run", { config });
+  return invoke("start_run", { args: { config } });
 }
 
 export function cancelRun(): Promise<{ cancelled: boolean }> {
@@ -86,7 +94,7 @@ export function gpuDownload(): Promise<{ started: boolean }> {
 }
 
 export function openFolder(path: string): Promise<{ opened: string }> {
-  return invoke("open_folder", { path });
+  return invoke("open_folder", { args: { path } });
 }
 
 /** Structured error surfaced by Rust commands (serde-serialized error type). */
@@ -107,19 +115,19 @@ export function asCommandError(e: unknown): CommandError | null {
 }
 
 export function advOpen(path: string): Promise<VideoMeta> {
-  return invoke("adv_open", { path });
+  return invoke("adv_open", { args: { path } });
 }
 
 export function advSeek(path: string, frame: number): Promise<{ frame_b64: string }> {
-  return invoke("adv_seek", { path, frame });
+  return invoke("adv_seek", { args: { path, frame } });
 }
 
 export function advCapture(path: string, frame: number, config: ExtractConfig): Promise<{ out_path: string }> {
-  return invoke("adv_capture", { path, frame, config });
+  return invoke("adv_capture", { args: { path, frame, config } });
 }
 
 export function advSegments(segments: Record<string, [number, number][]>): Promise<{ saved: boolean }> {
-  return invoke("adv_segments", { segments });
+  return invoke("adv_segments", { args: { segments } });
 }
 
 export interface VideoMeta {
@@ -171,6 +179,19 @@ export interface TaggerRunArgs {
   useGpu?: boolean;
 }
 
+export interface TaggerStatus {
+  available: boolean;
+  size_mb: number;
+}
+
+export function taggerStatus(model: string): Promise<TaggerStatus> {
+  return invoke("tagger_status", { args: { model } });
+}
+
+export function taggerDownload(model: string): Promise<{ started: boolean }> {
+  return invoke("tagger_download", { args: { model } });
+}
+
 export function runTagger(args: TaggerRunArgs): Promise<{ started: boolean }> {
-  return invoke("tagger_run", { ...args });
+  return invoke("tagger_run", { args });
 }

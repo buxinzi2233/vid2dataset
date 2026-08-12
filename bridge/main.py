@@ -94,6 +94,41 @@ class _LogHandler(logging.Handler):
         _write({"event": "extract.log", "data": {"line": self.format(record)}})
 
 
+def _pipeline_summary(result: object) -> dict:
+    """Return the compact, fully typed result consumed by the Tauri UI."""
+    return {
+        "total_written": result.total_written,
+        "total_candidates": result.total_candidates,
+        "elapsed_s": round(result.elapsed_s, 2),
+        "contact_sheet": result.contact_sheet_path,
+        "html_gallery": result.html_gallery_path,
+        "tagging": result.tagging,
+        "videos": [
+            {
+                "video": stats.video,
+                "duration_s": stats.duration_s,
+                "fps": stats.fps,
+                "width": stats.width,
+                "height": stats.height,
+                "scenes": stats.scenes,
+                "candidates": stats.candidates,
+                "written": stats.written,
+                "rejected_blur": stats.rejected_blur,
+                "rejected_luma": stats.rejected_luma,
+                "rejected_too_small": stats.rejected_too_small,
+                "rejected_dup": stats.rejected_dup,
+                "rejected_ssim": stats.rejected_ssim,
+                "rejected_color": stats.rejected_color,
+                "rejected_completeness": stats.rejected_completeness,
+                "auto_blur_threshold": stats.auto_blur_threshold,
+                "elapsed_s": round(stats.elapsed_s, 2),
+                "watermarks": stats.watermarks,
+            }
+            for stats in result.videos
+        ],
+    }
+
+
 def _extract_run(params: dict) -> dict:
     """Start extraction on a worker thread; returns immediately.
 
@@ -125,7 +160,7 @@ def _extract_run(params: dict) -> dict:
                 result = run_pipeline(cfg, progress=progress_cb, cancel_event=cancel)
             finally:
                 logging.getLogger().removeHandler(handler)
-            _write({"event": "extract.done", "data": result.to_summary_dict()})
+            _write({"event": "extract.done", "data": _pipeline_summary(result)})
         except Exception as e:  # noqa: BLE001 - surfaced as an event
             _write({"event": "extract.error", "data": {"message": str(e)}})
         finally:

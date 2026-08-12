@@ -8,6 +8,7 @@
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tauri::{AppHandle, State};
+use tauri_plugin_dialog::DialogExt;
 
 use crate::bridge::protocol::ErrorInfo;
 use crate::state::AppState;
@@ -56,11 +57,18 @@ pub fn set_prefs(args: SetPrefsArgs) -> Result<(), String> {
 /// List built-in presets from the live sidecar (`presets.list`).
 #[tauri::command]
 pub fn list_presets(state: State<'_, AppState>) -> Result<Value, String> {
-    let result = state.bridge.lock().unwrap().request("presets.list", json!({}));
+    let result = state
+        .bridge
+        .lock()
+        .unwrap()
+        .request("presets.list", json!({}));
     if result.ok {
         Ok(result.result)
     } else {
-        let e = result.error.unwrap_or(ErrorInfo { code: "ERR".into(), message: "".into() });
+        let e = result.error.unwrap_or(ErrorInfo {
+            code: "ERR".into(),
+            message: "".into(),
+        });
         Err(format!("{}: {}", e.code, e.message))
     }
 }
@@ -88,11 +96,18 @@ pub fn load_preset(args: LoadPresetArgs, state: State<'_, AppState>) -> Result<V
 
 #[tauri::command]
 pub fn config_defaults(state: State<'_, AppState>) -> Result<Value, String> {
-    let result = state.bridge.lock().unwrap().request("config.defaults", json!({}));
+    let result = state
+        .bridge
+        .lock()
+        .unwrap()
+        .request("config.defaults", json!({}));
     if result.ok {
         Ok(result.result)
     } else {
-        let e = result.error.unwrap_or(ErrorInfo { code: "ERR".into(), message: "".into() });
+        let e = result.error.unwrap_or(ErrorInfo {
+            code: "ERR".into(),
+            message: "".into(),
+        });
         Err(format!("{}: {}", e.code, e.message))
     }
 }
@@ -118,7 +133,10 @@ pub fn config_validate(
     if result.ok {
         Ok(result.result)
     } else {
-        let e = result.error.unwrap_or(ErrorInfo { code: "ERR".into(), message: "".into() });
+        let e = result.error.unwrap_or(ErrorInfo {
+            code: "ERR".into(),
+            message: "".into(),
+        });
         Err(format!("{}: {}", e.code, e.message))
     }
 }
@@ -126,6 +144,13 @@ pub fn config_validate(
 /// Open a native folder picker; returns the chosen path or null when cancelled.
 #[tauri::command]
 pub async fn browse_folder(_app: AppHandle) -> Result<Option<String>, String> {
-    // Scaffold: dialog plugin wiring lands with the config feature task.
-    Err("browse_folder: not implemented in scaffold".into())
+    _app.dialog()
+        .file()
+        .blocking_pick_folder()
+        .map(|path| {
+            path.into_path()
+                .map(|path| path.to_string_lossy().into_owned())
+                .map_err(|e| format!("invalid selected folder: {e}"))
+        })
+        .transpose()
 }

@@ -3,6 +3,7 @@
 import { renderPanel } from "../components/Panel";
 import { renderButton } from "../components/Button";
 import { showToast } from "../components/Toast";
+import { browseFolder } from "../api/ipc";
 import { el } from "../components/el";
 import { t } from "../i18n";
 import type { Store } from "../state/store";
@@ -25,15 +26,27 @@ function sourceRow(
     renderButton({
       label: t("browse"),
       variant: "ghost",
-      onClick: () => showToast("browse_folder: not implemented in scaffold"),
+      onClick: async () => {
+        try {
+          const path = await browseFolder();
+          if (path !== null) {
+            input.value = path;
+            onChange(path);
+          }
+        } catch (error) {
+          showToast(t("browse_error", { msg: String(error) }), true);
+        }
+      },
     }),
   );
   return row;
 }
 
 export function renderSourceView(store: Store): HTMLElement {
-  const root = document.createElement("div");
-  root.className = "view active inner";
+  const root = el("section", "view active");
+  root.dataset.view = "source";
+  const inner = el("div", "inner");
+  const deck = el("div", "deck");
 
   const inputBody = document.createElement("div");
   inputBody.append(
@@ -44,9 +57,11 @@ export function renderSourceView(store: Store): HTMLElement {
     sourceRow(t("dataset_folder"), store.outputPath, "/path/to/dataset", (v) => store.setOutputPath(v)),
   );
 
-  root.append(
-    renderPanel({ code: "01a", title: t("input"), tag: "SRC", body: [inputBody] }),
-    renderPanel({ code: "01b", title: t("output"), tag: "DST", body: [outputBody] }),
+  deck.append(
+    renderPanel({ code: "01a", title: t("input"), tag: "SRC", body: [inputBody], bodyClass: "slim" }),
+    renderPanel({ code: "01b", title: t("output"), tag: "DST", body: [outputBody], bodyClass: "slim" }),
   );
+  inner.append(deck);
+  root.append(inner);
   return root;
 }

@@ -63,7 +63,12 @@ impl Incoming {
 
 impl Response {
     pub fn ok(id: u64, result: serde_json::Value) -> Self {
-        Self { id, ok: true, result: Some(result), error: None }
+        Self {
+            id,
+            ok: true,
+            result: Some(result),
+            error: None,
+        }
     }
 
     pub fn err(id: u64, code: &str, message: &str) -> Self {
@@ -71,7 +76,10 @@ impl Response {
             id,
             ok: false,
             result: None,
-            error: Some(ErrorInfo { code: code.to_string(), message: message.to_string() }),
+            error: Some(ErrorInfo {
+                code: code.to_string(),
+                message: message.to_string(),
+            }),
         }
     }
 }

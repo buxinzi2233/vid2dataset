@@ -1,100 +1,111 @@
-//! Inspector: right param-parsing column (collapsed tab + expanded panel).
-//! Shows the selected parameter's value/description and a live config summary.
-
-import { append, el } from "./el";
+import { t } from "../i18n";
+import { PARAMS, SWITCHES, type SwitchMeta } from "../state/paramMeta";
 import type { Store } from "../state/store";
+import { el } from "./el";
 
-const PARAM_META: { key: string; label: string; unit?: string }[] = [
-  { key: "resolution", label: "Resolution", unit: "px" },
-  { key: "blur_threshold", label: "Blur threshold" },
-  { key: "max_per_video", label: "Max per video" },
-  { key: "min_per_video", label: "Min per video" },
-  { key: "phash_distance", label: "Dedup distance" },
-  { key: "ssim_threshold", label: "SSIM diversity" },
-  { key: "color_distance", label: "Color distance" },
-  { key: "frames_per_scene", label: "Frames / scene" },
-];
-
-const PARAM_TIPS: Record<string, string> = {
-  resolution: "Long edge in pixels. Anima default: 1024.",
-  blur_threshold: "Min Laplacian variance. Below = blurry. MMD: 50-100.",
-  max_per_video: "0 = no limit.",
-  min_per_video: "Guarantee at least N frames per video.",
-  phash_distance: "0 = identical, 5 = similar, 10+ = loose.",
-  ssim_threshold: "Lower = more diverse poses required.",
-  color_distance: "Higher = more lighting variety.",
-  frames_per_scene: "Candidate frames sampled per scene.",
-};
-
-export interface InspectorProps {
-  store: Store;
+export interface Inspector {
+  root: HTMLElement;
+  destroy: () => void;
 }
 
-export function renderInspector(props: InspectorProps): HTMLElement {
-  const { store } = props;
-  const inspector = el("aside", "inspector");
-
-  const tab = el("div", "insp-tab", "INSPECT");
-  tab.addEventListener("click", () => {
-    inspector.classList.toggle("open");
-    if (inspector.classList.contains("open")) render();
-  });
+export function renderInspector(store: Store): Inspector {
+  const root = el("aside", "inspector");
+  const tab = el("button", "insp-tab");
+  tab.type = "button";
+  tab.title = t("inspect");
+  tab.append(el("span", "tabdot"), el("span", "tabword", t("inspect")), el("span", "tabarrow", "‹"));
+  tab.addEventListener("click", () => store.setInspectorOpen(!store.inspectorOpen));
 
   const panel = el("div", "insp-panel");
   const bar = el("div", "ibar");
-  bar.append(el("span", undefined, "INSPECT"), el("span", "tag", "RL-PARSE"));
-
-  const codeEl = el("div", "i-code", "P.—");
-  const titleEl = el("div", "i-title", "—");
-  const valueEl = el("div", "i-value", "—");
-  const descEl = el("div", "i-desc", "Select a parameter to inspect.");
-  const secEl = el("div", "i-sec", "CONFIG SUMMARY");
-  const summaryEl = el("div", "i-summary");
-
+  bar.append(el("span", undefined, t("inspect")), el("span", "tag", "RL-PARSE"));
   const body = el("div", "ibody");
-  append(body, codeEl, titleEl, valueEl, descEl, secEl, summaryEl);
-  append(panel, bar, body);
-  append(inspector, tab, panel);
+  const code = el("div", "i-code");
+  const title = el("div", "i-title");
+  const value = el("div", "i-value");
+  const description = el("div", "i-desc");
+  const section = el("div", "i-sec", t("cfg_summary"));
+  const summary = el("div", "i-summary");
+  body.append(code, title, value, description, section, summary);
+  panel.append(bar, body);
+  root.append(tab, panel);
 
-  function render(): void {
-    const selected = store.selectedParam;
-    const meta = PARAM_META.find((m) => m.key === selected);
-    if (!meta) {
-      codeEl.textContent = "P.—";
-      titleEl.textContent = "—";
-      valueEl.textContent = "—";
-      descEl.textContent = "Select a parameter to inspect.";
-    } else {
-      const idx = PARAM_META.findIndex((m) => m.key === meta.key);
-      codeEl.textContent = `P.${String(idx + 1).padStart(2, "0")}`;
-      titleEl.textContent = meta.label;
-      const raw = store.config[meta.key as keyof typeof store.config];
-      valueEl.textContent = raw === undefined || raw === "" ? "—" : `${raw}${meta.unit ? ` ${meta.unit}` : ""}`;
-      descEl.textContent = PARAM_TIPS[meta.key] ?? "";
+  function switchValue(item: SwitchMeta): string {
+    if (item.key === "decode_mode") {
+      return store.config.decode_mode === "keyframe" ? t("keyframe_on") : t("accurate_off");
     }
-
-    summaryEl.innerHTML = "";
-    PARAM_META.forEach((m, i) => {
-      const row = el("div", "i-row" + (m.key === selected ? " selected" : ""));
-      const top = el("div", "row-top");
-      top.append(el("span", "rkey", `P.${String(i + 1).padStart(2, "0")}`));
-      top.append(el("span", "rname", m.label));
-      const raw = store.config[m.key as keyof typeof store.config];
-      const val = raw === undefined || raw === "" ? "—" : `${raw}${m.unit ? ` ${m.unit}` : ""}`;
-      const valEl = el("div", "row-val");
-      valEl.append(el("span", "rval", val));
-      row.append(top, valEl);
-      row.addEventListener("click", () => {
-        store.selectParam(m.key);
-        render();
-      });
-      summaryEl.append(row);
-    });
+    const enabled = Boolean(store.config[item.key as keyof typeof store.config]);
+    const state = enabled ? t("enabled") : t("disabled");
+    if (item.key === "gpu_accel" && enabled) return `${state} · ${store.gpu.status.toUpperCase()}`;
+    return state;
   }
 
-  // Re-render whenever selection or config changes.
-  store.subscribe(render);
+  function appendSummaryHeading(label: string): void {
+    summary.append(el("div", "i-group", label));
+  }
 
-  void render();
-  return inspector;
+  function render(): void {
+    root.classList.toggle("open", store.inspectorOpen);
+    const paramIndex = PARAMS.findIndex((item) => item.key === store.selectedParam);
+    const switchIndex = SWITCHES.findIndex((item) => item.key === store.selectedParam);
+    const selectedParam = paramIndex >= 0 ? PARAMS[paramIndex] : null;
+    const selectedSwitch = switchIndex >= 0 ? SWITCHES[switchIndex] : null;
+    const fallback = PARAMS[0];
+
+    if (selectedSwitch) {
+      code.textContent = `S.${String(switchIndex + 1).padStart(2, "0")}`;
+      title.textContent = selectedSwitch.label;
+      value.textContent = switchValue(selectedSwitch);
+      description.textContent = selectedSwitch.tip;
+    } else {
+      const selected = selectedParam ?? fallback;
+      const index = selectedParam ? paramIndex : 0;
+      code.textContent = `P.${String(index + 1).padStart(2, "0")}`;
+      title.textContent = selected.label;
+      const raw = store.config[selected.key as keyof typeof store.config];
+      value.textContent = `${raw ?? "—"}${selected.unit ? ` ${selected.unit}` : ""}`;
+      description.textContent = selected.tip;
+    }
+
+    summary.innerHTML = "";
+    appendSummaryHeading(t("numeric_params"));
+    for (const [index, item] of PARAMS.entries()) {
+      const row = el("button", `i-row${item.key === store.selectedParam ? " selected" : ""}`);
+      row.type = "button";
+      const top = el("span", "row-top");
+      top.append(el("span", "rkey", `P.${String(index + 1).padStart(2, "0")}`), el("span", "rname", item.label));
+      const rowValue = store.config[item.key as keyof typeof store.config];
+      const val = el("span", "row-val");
+      val.append(el("span", "rval", String(rowValue ?? "—")), el("span", "runit", item.unit ? ` ${item.unit}` : ""));
+      row.append(top, val);
+      row.addEventListener("click", () => store.selectParam(item.key, true));
+      summary.append(row);
+    }
+    appendSummaryHeading(t("feature_switches"));
+    for (const [index, item] of SWITCHES.entries()) {
+      const row = el("button", `i-row switch-row${item.key === store.selectedParam ? " selected" : ""}`);
+      row.type = "button";
+      const top = el("span", "row-top");
+      top.append(el("span", "rkey", `S.${String(index + 1).padStart(2, "0")}`), el("span", "rname", item.label));
+      const val = el("span", "row-val");
+      val.append(el("span", "rval", switchValue(item)));
+      row.append(top, val);
+      row.addEventListener("click", () => store.selectParam(item.key, true));
+      summary.append(row);
+    }
+  }
+
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === "Escape" && store.inspectorOpen) store.setInspectorOpen(false);
+  };
+  document.addEventListener("keydown", onKeyDown);
+  const unsubscribe = store.subscribe(render);
+  render();
+  return {
+    root,
+    destroy: () => {
+      unsubscribe();
+      document.removeEventListener("keydown", onKeyDown);
+    },
+  };
 }

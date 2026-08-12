@@ -217,6 +217,13 @@ def test_extract_run_streams_events_and_done(proc, tmp_path) -> None:
     done = frames[-1]
     assert done["event"] == "extract.done"
     assert done["data"]["total_written"] >= 1
+    video_summary = done["data"]["videos"][0]
+    assert video_summary["duration_s"] > 0
+    assert video_summary["fps"] > 0
+    assert video_summary["width"] > 0
+    assert video_summary["height"] > 0
+    assert "scenes" in video_summary
+    assert "watermarks" in video_summary
     assert (tmp_path / "out").exists()
 
 

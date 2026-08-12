@@ -68,7 +68,11 @@ pub fn start_run(args: StartRunArgs, state: State<'_, AppState>) -> Result<Value
 /// Ask the sidecar to set its extraction cancel event.
 #[tauri::command]
 pub fn cancel_run(state: State<'_, AppState>) -> Result<Value, String> {
-    let result = state.bridge.lock().unwrap().request("extract.cancel", json!({}));
+    let result = state
+        .bridge
+        .lock()
+        .unwrap()
+        .request("extract.cancel", json!({}));
     if result.ok {
         Ok(result.result)
     } else {
@@ -101,11 +105,10 @@ pub struct AdvSeekArgs {
 
 #[tauri::command]
 pub fn adv_seek(args: AdvSeekArgs, state: State<'_, AppState>) -> Result<Value, String> {
-    let result = state
-        .bridge
-        .lock()
-        .unwrap()
-        .request("advanced.seek", json!({ "path": args.path, "frame": args.frame }));
+    let result = state.bridge.lock().unwrap().request(
+        "advanced.seek",
+        json!({ "path": args.path, "frame": args.frame }),
+    );
     if result.ok {
         Ok(result.result)
     } else {
@@ -124,14 +127,10 @@ pub struct AdvCaptureArgs {
 
 #[tauri::command]
 pub fn adv_capture(args: AdvCaptureArgs, state: State<'_, AppState>) -> Result<Value, String> {
-    let result = state
-        .bridge
-        .lock()
-        .unwrap()
-        .request(
-            "advanced.capture",
-            json!({ "path": args.path, "frame": args.frame, "config": args.config }),
-        );
+    let result = state.bridge.lock().unwrap().request(
+        "advanced.capture",
+        json!({ "path": args.path, "frame": args.frame, "config": args.config }),
+    );
     if result.ok {
         Ok(result.result)
     } else {

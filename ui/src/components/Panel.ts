@@ -7,6 +7,7 @@ export interface PanelProps {
   title: string;
   tag?: string;
   body?: HTMLElement[];
+  bodyClass?: string;
 }
 
 export function renderPanel(props: PanelProps): HTMLElement {
@@ -15,7 +16,7 @@ export function renderPanel(props: PanelProps): HTMLElement {
   head.append(el("span", "code", props.code));
   head.append(el("span", "ptitle", props.title));
   if (props.tag) head.append(el("span", "ptag", props.tag));
-  const body = el("div", "pbody");
+  const body = el("div", `pbody ${props.bodyClass ?? ""}`.trim());
   append(body, ...(props.body ?? []));
   return append(panel, head, body);
 }

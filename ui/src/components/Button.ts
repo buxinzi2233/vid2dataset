@@ -9,6 +9,8 @@ export interface ButtonProps {
   variant?: ButtonVariant;
   disabled?: boolean;
   onClick?: () => void;
+  className?: string;
+  title?: string;
 }
 
 const VARIANT_CLASS: Record<ButtonVariant, string> = {
@@ -19,7 +21,13 @@ const VARIANT_CLASS: Record<ButtonVariant, string> = {
 };
 
 export function renderButton(props: ButtonProps): HTMLButtonElement {
-  const btn = el("button", `btn ${VARIANT_CLASS[props.variant ?? "ghost"]}`.trim(), props.label);
+  const btn = el(
+    "button",
+    `btn ${VARIANT_CLASS[props.variant ?? "ghost"]} ${props.className ?? ""}`.trim(),
+    props.label,
+  );
+  btn.type = "button";
+  if (props.title) btn.title = props.title;
   if (props.disabled) btn.disabled = true;
   if (props.onClick) btn.addEventListener("click", props.onClick);
   return btn;

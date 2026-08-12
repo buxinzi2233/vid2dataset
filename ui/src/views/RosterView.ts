@@ -1,59 +1,107 @@
-//! Roster view: discovered videos as cards.
-
-import { renderPanel } from "../components/Panel";
-import { discoverVideos } from "../api/ipc";
+import type { VideoStatsSummary } from "../api/events";
 import { el } from "../components/el";
 import { t } from "../i18n";
-import type { Store } from "../state/store";
+import { aggregateResult, rejectedCount } from "../state/runState";
+import type { Store, VideoEntry } from "../state/store";
+
+export interface RosterViewOptions {
+  onSelect?: () => void;
+}
 
 export interface RosterView {
   root: HTMLElement;
   refresh: () => Promise<void>;
+  destroy: () => void;
 }
 
-export function renderRosterView(store: Store): RosterView {
-  const root = document.createElement("div");
-  root.className = "view inner";
+function basename(path: string): string {
+  return path.split(/[\\/]/).pop() ?? path;
+}
 
+function formatDuration(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  return [hours, minutes, secs].map((value) => String(value).padStart(2, "0")).join(":");
+}
+
+function resultFor(store: Store, entry: VideoEntry): VideoStatsSummary | undefined {
+  return store.run.result?.videos.find((video) => video.video === entry.path || basename(video.video) === entry.name);
+}
+
+function summaryItem(label: string, unit: string, className = ""): { root: HTMLElement; value: HTMLElement } {
+  const root = el("div", "sum-item");
+  const value = el("div", `sv ${className}`.trim());
+  value.append(document.createTextNode("0"), el("span", "unit", ` ${unit}`));
+  root.append(el("div", "sk", label), value);
+  return { root, value };
+}
+
+export function renderRosterView(store: Store, options: RosterViewOptions = {}): RosterView {
+  const root = el("section", "view");
+  root.dataset.view = "roster";
+  const inner = el("div", "inner");
+  const summary = el("div", "summary");
+  const written = summaryItem(t("written"), t("images"), "accent");
+  const rejected = summaryItem(t("rejected"), t("frames"));
+  const watermarks = summaryItem(t("watermarks"), t("detected"), "warn");
+  const elapsed = summaryItem(t("elapsed"), "s");
+  summary.append(written.root, rejected.root, watermarks.root, elapsed.root);
   const roster = el("div", "roster");
-  const count = el("div", "validate-status");
+  const status = el("div", "validate-status");
+  inner.append(summary, roster, status);
+  root.append(inner);
 
-  const panel = renderPanel({
-    code: "04",
-    title: t("v_roster"),
-    tag: "0 FILES",
-    body: [roster, count],
-  });
-  root.append(panel);
-
-  async function refresh(): Promise<void> {
-    const path = store.inputPath;
-    if (!path) {
-      count.textContent = t("no_input");
-      count.className = "validate-status";
-      return;
-    }
-    count.className = "validate-status";
-    try {
-      const files = await discoverVideos(path);
-      count.textContent = t("videos_found", { n: files.length });
-      panel.querySelector(".ptag")!.textContent = `${files.length} FILES`;
-      roster.innerHTML = "";
-      for (const f of files) {
-        const card = el("div", "roster-card");
-        const meta = el("div", "meta");
-        const name = el("div", "vname", f.split(/[\\/]/).pop() ?? f);
-        const sub = el("div", "vsub", f);
-        meta.append(name, sub);
-        card.append(meta);
-        roster.append(card);
-      }
-    } catch (e) {
-      count.textContent = t("path_not_found", { path });
-      count.className = "validate-status err";
-    }
+  function setSummaryValue(node: HTMLElement, value: string, unit: string): void {
+    node.replaceChildren(document.createTextNode(value), el("span", "unit", ` ${unit}`));
   }
 
-  void refresh();
-  return { root, refresh };
+  function render(): void {
+    const aggregate = aggregateResult(store.run.result);
+    setSummaryValue(written.value, String(aggregate.written), t("images"));
+    setSummaryValue(rejected.value, String(aggregate.rejected), t("frames"));
+    setSummaryValue(watermarks.value, String(aggregate.watermarks), t("detected"));
+    setSummaryValue(elapsed.value, aggregate.elapsed.toFixed(1), "s");
+
+    roster.innerHTML = "";
+    for (const entry of store.videos) {
+      const result = resultFor(store, entry);
+      const card = el("button", `roster-card${store.selectedVideo === entry.path ? " selected" : ""}`);
+      card.type = "button";
+      const barClass = result
+        ? result.watermarks.length ? "warn" : "done"
+        : store.run.status === "running" ? "busy" : "";
+      const statusBar = el("span", `statusbar ${barClass}`.trim());
+      const meta = el("span", "meta");
+      const details = entry.meta
+        ? `${formatDuration(entry.meta.duration_s)} · ${entry.meta.width}×${entry.meta.height} · ${entry.meta.fps.toFixed(2)} fps`
+        : entry.probeError ? `PROBE ERROR · ${entry.probeError}` : entry.path;
+      meta.append(el("span", "vname", entry.name), el("span", "vsub", details));
+      const stats = el("span", "vstats");
+      const kept = el("span");
+      kept.append(el("span", "num kept", result ? String(result.written) : "—"), document.createTextNode(t("kept")));
+      const rej = el("span");
+      rej.append(el("span", "num rej", result ? String(rejectedCount(result)) : "—"), document.createTextNode(t("rej")));
+      const watermark = el("span", "warn-tag", result?.watermarks.length ? `WM ×${result.watermarks.length}` : "");
+      stats.append(kept, rej, watermark);
+      card.append(statusBar, meta, stats);
+      card.addEventListener("click", () => {
+        store.selectVideo(entry.path);
+        options.onSelect?.();
+      });
+      roster.append(card);
+    }
+
+    if (store.rosterLoading) status.textContent = t("discovering_videos");
+    else if (store.rosterStatus === "no-input") status.textContent = t("no_input");
+    else if (store.rosterStatus === "empty") status.textContent = t("no_videos", { path: store.inputPath });
+    else if (store.rosterStatus.startsWith("error:")) status.textContent = store.rosterStatus.slice(6);
+    else status.textContent = store.videos.length ? t("videos_found", { n: store.videos.length }) : "";
+    status.className = `validate-status${store.rosterStatus.startsWith("error:") ? " err" : ""}`;
+  }
+
+  const unsubscribe = store.subscribe(render);
+  render();
+  return { root, refresh: () => store.refreshVideos(), destroy: unsubscribe };
 }

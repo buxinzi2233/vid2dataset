@@ -1,129 +1,114 @@
-//! Execute view: run strip + scan + progress + console + open output.
-
-import { renderConsole, appendLogLine } from "../components/Console";
-import { renderButton } from "../components/Button";
 import { asCommandError, openFolder } from "../api/ipc";
-import {
-  onExtractDone,
-  onExtractError,
-  onExtractLog,
-  onExtractProgress,
-} from "../api/events";
+import { renderButton } from "../components/Button";
+import { appendLogLine, renderConsole } from "../components/Console";
 import { el } from "../components/el";
 import { t } from "../i18n";
 import type { Store } from "../state/store";
 
-export interface ExecuteViewOpts {
+export interface ExecuteViewOptions {
   onAdvanced?: () => void;
 }
 
-export function renderExecuteView(store: Store, opts: ExecuteViewOpts = {}): HTMLElement {
-  const root = document.createElement("div");
-  root.className = "view inner";
+export interface ExecuteView {
+  root: HTMLElement;
+  run: () => void;
+  destroy: () => void;
+}
+
+export function renderExecuteView(store: Store, options: ExecuteViewOptions = {}): ExecuteView {
+  const root = el("section", "view");
+  root.dataset.view = "execute";
+  const inner = el("div", "inner");
+  const head = el("div", "exec-head");
+  const live = el("span", "live", "● RUNNING");
+  head.append(el("h2", undefined, t("execute")), live);
 
   const strip = el("div", "run-strip");
-  const runBtn = renderButton({ label: t("extract_big"), variant: "fill" });
-  runBtn.dataset.run = "true";
+  const runButton = el("button", "btn-run", t("extract_big"));
+  runButton.type = "button";
+  runButton.dataset.run = "true";
   const side = el("div", "btn-side");
-  const advBtn = renderButton({
-    label: t("advanced"),
-    variant: "orange",
-    onClick: () => opts.onAdvanced?.(),
-  });
-  const cancelBtn = renderButton({ label: t("cancel"), variant: "danger", disabled: true });
-  cancelBtn.dataset.cancel = "true";
-  side.append(advBtn, cancelBtn);
-  strip.append(runBtn, side);
+  const advanced = renderButton({ label: t("advanced"), variant: "orange", className: "adv", onClick: () => options.onAdvanced?.() });
+  const cancel = renderButton({ label: t("cancel"), variant: "danger", className: "cancel", disabled: true, onClick: () => void cancelRun() });
+  side.append(advanced, cancel);
+  strip.append(runButton, side);
 
   const scan = el("div", "scan");
   scan.append(el("div", "sweep"));
-
-  const prog = el("div", "prog");
-  const progFill = el("div", "fill");
-  prog.append(progFill);
-
+  const progress = el("div", "prog");
+  const progressFill = el("div", "fill");
+  progress.append(progressFill);
   const status = el("div", "status", t("ready"));
-
-  const open = renderButton({
-    label: "OPEN OUTPUT",
-    variant: "ghost",
-    onClick: async () => {
-      const path = store.outputPath || "output";
-      try {
-        await openFolder(path);
-        status.textContent = t("open_done", { path });
-        status.className = "status";
-      } catch (e) {
-        const err = asCommandError(e);
-        status.textContent = err?.message ?? String(e);
-        status.className = "status err";
-      }
-    },
-  });
-
   const console = renderConsole();
-  root.append(strip, scan, prog, status, console, open);
+  const actions = el("div", "exec-actions");
+  const openOutput = renderButton({ label: t("open_output"), onClick: () => void openOutputFolder() });
+  actions.append(openOutput);
+  inner.append(head, strip, scan, progress, status, console, actions);
+  root.append(inner);
 
-  // ── Run lifecycle ─────────────────────────────────────────────
-  function setBusy(busy: boolean): void {
-    runBtn.disabled = busy;
-    cancelBtn.disabled = !busy;
-    scan.classList.toggle("busy", busy);
+  let renderedLogCount = 0;
+  function render(): void {
+    const busy = store.run.status === "running" || store.run.status === "cancelling";
+    runButton.disabled = busy;
+    cancel.disabled = store.run.status !== "running";
+    runButton.classList.toggle("busy", busy);
+    live.classList.toggle("on", busy);
+    progressFill.style.width = `${store.run.progress}%`;
+    status.className = `status${store.run.status === "error" ? " error" : ""}`;
+
+    if (store.run.log.length < renderedLogCount) {
+      console.innerHTML = "";
+      renderedLogCount = 0;
+    }
+    for (const line of store.run.log.slice(renderedLogCount)) appendLogLine(console, line);
+    renderedLogCount = store.run.log.length;
+
+    if (store.run.status === "cancelling") status.textContent = t("cancelling");
+    else if (store.run.status === "done") status.textContent = t("run_done", { count: store.run.totalWritten, time: store.run.elapsedSeconds.toFixed(1) });
+    else if (store.run.status === "error") status.textContent = t("run_error", { msg: store.run.errorMessage });
+    else if (store.run.status === "running" && store.run.stage === "video") status.textContent = t("processing_video", { current: store.run.current, total: store.run.total });
+    else if (store.run.status === "running" && store.run.stage) status.textContent = `${store.run.stage} · ${store.run.current}/${store.run.total}`;
+    else if (store.run.status === "running") status.textContent = t("run_started");
+    else status.textContent = t("ready");
   }
 
-  function wireEvents(): void {
-    void onExtractProgress((e) => {
-      if (e.stage === "video") {
-        const pct = e.total > 0 ? Math.round((e.current / e.total) * 100) : 0;
-        progFill.style.width = `${pct}%`;
-        status.textContent = `Processing video ${e.current}/${e.total}…`;
-      } else {
-        status.textContent = `${e.stage}: ${e.current}/${e.total}`;
-      }
-    });
-
-    void onExtractLog((e) => appendLogLine(console, e.line));
-
-    void onExtractDone((e) => {
-      progFill.style.width = "100%";
-      status.textContent = t("run_done", { count: e.total_written, time: e.elapsed_s.toFixed(1) });
-      setBusy(false);
-    });
-
-    void onExtractError((e) => {
-      status.textContent = t("run_error", { msg: e.message });
-      status.className = "status err";
-      setBusy(false);
-    });
-  }
-
-  runBtn.addEventListener("click", async () => {
+  async function startRun(): Promise<void> {
     if (!store.inputPath) {
+      status.className = "status error";
       status.textContent = t("no_input");
-      status.className = "status err";
       return;
     }
-    status.textContent = t("run_started");
-    status.className = "status";
-    setBusy(true);
     try {
       await store.start();
-    } catch (e) {
-      status.textContent = t("run_error", { msg: String(e) });
-      status.className = "status err";
-      setBusy(false);
+    } catch (error) {
+      store.run.fail(String(error));
     }
-  });
+  }
 
-  cancelBtn.addEventListener("click", async () => {
-    status.textContent = t("cancelling");
+  async function cancelRun(): Promise<void> {
     try {
       await store.cancel();
-    } catch (e) {
-      status.textContent = String(e);
+    } catch (error) {
+      status.className = "status error";
+      status.textContent = String(error);
     }
-  });
+  }
 
-  wireEvents();
-  return root;
+  async function openOutputFolder(): Promise<void> {
+    const path = store.outputPath || "output";
+    try {
+      await openFolder(path);
+      status.className = "status";
+      status.textContent = t("open_done", { path });
+    } catch (error) {
+      const structured = asCommandError(error);
+      status.className = "status error";
+      status.textContent = structured?.message ?? String(error);
+    }
+  }
+
+  runButton.addEventListener("click", () => void startRun());
+  const unsubscribe = store.subscribe(render);
+  render();
+  return { root, run: () => void startRun(), destroy: unsubscribe };
 }

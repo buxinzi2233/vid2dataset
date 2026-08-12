@@ -8,7 +8,11 @@ use crate::state::AppState;
 
 #[tauri::command]
 pub fn check_update(state: State<'_, AppState>) -> Result<Value, String> {
-    let result = state.bridge.lock().unwrap().request("update.check", json!({}));
+    let result = state
+        .bridge
+        .lock()
+        .unwrap()
+        .request("update.check", json!({}));
     if result.ok {
         Ok(result.result)
     } else {
@@ -19,7 +23,11 @@ pub fn check_update(state: State<'_, AppState>) -> Result<Value, String> {
 
 #[tauri::command]
 pub fn install_update(state: State<'_, AppState>) -> Result<Value, String> {
-    let result = state.bridge.lock().unwrap().request("update.install", json!({}));
+    let result = state
+        .bridge
+        .lock()
+        .unwrap()
+        .request("update.install", json!({}));
     if result.ok {
         Ok(result.result)
     } else {
@@ -43,7 +51,10 @@ pub struct OpenFolderError {
 
 impl OpenFolderError {
     fn new(code: &str, message: String) -> Self {
-        Self { code: code.to_string(), message }
+        Self {
+            code: code.to_string(),
+            message,
+        }
     }
 }
 
@@ -108,7 +119,10 @@ pub fn open_folder(args: OpenFolderArgs) -> Result<Value, OpenFolderError> {
         .map_err(|e| {
             OpenFolderError::new(
                 "OPEN_FAILED",
-                format!("Failed to launch the file manager for {}: {e}", path.display()),
+                format!(
+                    "Failed to launch the file manager for {}: {e}",
+                    path.display()
+                ),
             )
         })?;
     Ok(json!({ "opened": path.display().to_string() }))
@@ -161,7 +175,9 @@ mod tests {
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
         // Root bypasses mode bits; in that case read_dir still succeeds, so
         // there is no permission error to assert — treat as pass.
-        let outcome = std::fs::read_dir(&dir).map(|_| "readable").map_err(|_| "blocked");
+        let outcome = std::fs::read_dir(&dir)
+            .map(|_| "readable")
+            .map_err(|_| "blocked");
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
         let _ = std::fs::remove_dir(&dir);
         if outcome == Ok("blocked") {
@@ -174,7 +190,9 @@ mod tests {
     fn open_folder_existing_dir_succeeds() {
         // Use a path that certainly exists: the crate source directory.
         let dir = env!("CARGO_MANIFEST_DIR");
-        match open_folder(OpenFolderArgs { path: dir.to_string() }) {
+        match open_folder(OpenFolderArgs {
+            path: dir.to_string(),
+        }) {
             Ok(value) => assert_eq!(value["opened"], dir),
             Err(e) => {
                 // Headless hosts may lack xdg-open; a graceful error is

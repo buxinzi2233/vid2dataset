@@ -82,7 +82,7 @@ stdout 只写协议帧；Python 日志输出到 **stderr**（Rust 单独线程�
 
 ## 3. Tauri commands（前端 invoke → Rust）
 
-> 命名空间：`camelCase`。参数用 kebab→camel 映射（`load_preset` → `{ name }`）。
+> 命名空间：`camelCase`。Rust 命令的业务参数结构体名为 `args`，因此前端 invoke 统一封装为 `{ args: { ... } }`（例如 `load_preset` → `{ args: { name } }`）。下表“参数”列展示 `args` 内部字段。
 
 | command | 参数 | 返回 | 转发 |
 |---|---|---|---|
@@ -129,15 +129,15 @@ interface RuntimeStatus { available: boolean; cached: boolean; version: string |
 
 | 事件名 | payload | 说明 |
 |---|---|---|
-| `extract.progress` | `{ stage, current, total }` | `stage`: `video` / `decode` / `tag:tagging` / `tag:<pkg>` 下载 |
-| `extract.log` | `{ line }` | 控制台一行（来自 Python logging） |
-| `extract.done` | `{ result: PipelineResult }` | 提取完成（`PipelineResult.to_summary_dict()`） |
-| `extract.error` | `{ message }` | 提取失败 |
-| `download.progress` | `{ pkg, current, total }` | GPU/tagger 模型下载（bytes） |
-| `download.done` | `{ kind, error? }` | `kind`: `gpu` / `tagger`；失败时带 `error` 字符串 |
-| `tagger.done` | `{ tagged, failed, total, cancelled, rejected, pruned_tags, tag_counts, per_image }` 或 `{ error }` | `tagger.run` 完成（TagSummary） |
+| `extract:progress` | `{ stage, current, total }` | `stage`: `video` / `decode` / `tag:tagging` / `tag:<pkg>` 下载 |
+| `extract:log` | `{ line }` | 控制台一行（来自 Python logging） |
+| `extract:done` | `PipelineResult` | 提取完成（`PipelineResult.to_summary_dict()`） |
+| `extract:error` | `{ message }` | 提取失败 |
+| `download:progress` | `{ pkg, current, total }` | GPU/tagger 模型下载（bytes） |
+| `download:done` | `{ kind, error? }` | `kind`: `gpu` / `tagger`；失败时带 `error` 字符串 |
+| `tagger:done` | `{ tagged, failed, total, cancelled, rejected, pruned_tags, tag_counts, per_image }` 或 `{ error }` | `tagger.run` 完成（TagSummary） |
 
-事件名 = bridge 事件名直接透传（Rust 层不加前缀改写，保持一致）。
+Bridge/NDJSON 事件名保留点号（如 `extract.progress`）；Rust 转发到 Tauri WebView 时将点号映射为冒号（如 `extract:progress`），以满足 Tauri 2 的事件名校验规则。
 
 ---
 
