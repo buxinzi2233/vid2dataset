@@ -201,7 +201,7 @@ export async function renderApp(root: HTMLElement): Promise<void> {
   };
 
   const rail = buildRail((key: string) => switchView(key), () => showModal(aboutModal, true));
-  work.append(rail, viewport, renderInspector({}));
+  work.append(rail, viewport, renderInspector({ store }));
   app.append(buildTopBar(store, runFromTop), work);
 
   root.style.width = `${SHELL.designW}px`;

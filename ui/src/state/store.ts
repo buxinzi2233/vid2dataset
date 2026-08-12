@@ -22,6 +22,8 @@ export interface Segment {
   end: number;
 }
 
+type Listener = () => void;
+
 export class Store {
   config: Partial<ExtractConfig> = {};
   presets: PresetInfo[] = [];
@@ -33,6 +35,15 @@ export class Store {
   selectedParam: string | null = null;
   segments: Record<string, Segment[]> = {};
   run = new RunState();
+  private listeners: Listener[] = [];
+
+  subscribe(fn: Listener): void {
+    this.listeners.push(fn);
+  }
+
+  private notify(): void {
+    for (const fn of this.listeners) fn();
+  }
 
   async init(): Promise<void> {
     this.presets = await listPresets();
@@ -41,16 +52,19 @@ export class Store {
   async applyPreset(name: string): Promise<void> {
     this.presetName = name;
     this.config = await loadPreset(name);
+    this.notify();
   }
 
   setInputPath(p: string): void {
     this.inputPath = p;
     this.prefs.input = p;
+    this.notify();
   }
 
   setOutputPath(p: string): void {
     this.outputPath = p;
     this.prefs.output = p;
+    this.notify();
   }
 
   setLang(lang: "en" | "zh"): void {
@@ -60,10 +74,12 @@ export class Store {
 
   setParam(key: string, value: string | number | boolean): void {
     this.config = { ...this.config, [key]: value };
+    this.notify();
   }
 
   selectParam(key: string | null): void {
     this.selectedParam = key;
+    this.notify();
   }
 
   buildConfig(): Partial<ExtractConfig> & { input: string; output: string } {
