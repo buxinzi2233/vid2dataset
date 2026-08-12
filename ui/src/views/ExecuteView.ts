@@ -13,7 +13,11 @@ import { el } from "../components/el";
 import { t } from "../i18n";
 import type { Store } from "../state/store";
 
-export function renderExecuteView(store: Store): HTMLElement {
+export interface ExecuteViewOpts {
+  onAdvanced?: () => void;
+}
+
+export function renderExecuteView(store: Store, opts: ExecuteViewOpts = {}): HTMLElement {
   const root = document.createElement("div");
   root.className = "view inner";
 
@@ -21,7 +25,11 @@ export function renderExecuteView(store: Store): HTMLElement {
   const runBtn = renderButton({ label: t("extract_big"), variant: "fill" });
   runBtn.dataset.run = "true";
   const side = el("div", "btn-side");
-  const advBtn = renderButton({ label: t("advanced"), variant: "orange" });
+  const advBtn = renderButton({
+    label: t("advanced"),
+    variant: "orange",
+    onClick: () => opts.onAdvanced?.(),
+  });
   const cancelBtn = renderButton({ label: t("cancel"), variant: "danger", disabled: true });
   cancelBtn.dataset.cancel = "true";
   side.append(advBtn, cancelBtn);

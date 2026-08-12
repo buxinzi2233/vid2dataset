@@ -8,6 +8,7 @@ import { renderParamsView } from "./views/ParamsView";
 import { renderCaptionView } from "./views/CaptionView";
 import { renderRosterView, type RosterView } from "./views/RosterView";
 import { renderExecuteView } from "./views/ExecuteView";
+import { renderAdvancedModal } from "./components/AdvancedModal";
 import { applyHead } from "./theme/theme";
 import { applyTokenVars, SHELL } from "./theme/tokens";
 import { checkUpdateInfo, gpuDetect, gpuDownload, gpuStatus, installUpdate } from "./api/ipc";
@@ -155,7 +156,7 @@ function buildAboutModal(onClose: () => void): HTMLElement {
   return renderModal({ title: "ABOUT", tag: "RL-EXTRACT-OS", width: 420, body: [body], onClose });
 }
 
-function buildViewport(store: Store): { viewport: HTMLElement; roster: RosterView } {
+function buildViewport(store: Store, onAdvanced: () => void): { viewport: HTMLElement; roster: RosterView } {
   const viewport = el("main", "viewport");
   const roster = renderRosterView(store);
   viewport.append(
@@ -163,7 +164,7 @@ function buildViewport(store: Store): { viewport: HTMLElement; roster: RosterVie
     renderParamsView(store),
     renderCaptionView(store),
     roster.root,
-    renderExecuteView(store),
+    renderExecuteView(store, { onAdvanced }),
   );
   return { viewport, roster };
 }
@@ -178,9 +179,12 @@ export async function renderApp(root: HTMLElement): Promise<void> {
   const aboutModal = buildAboutModal(() => showModal(aboutModal, false));
   document.body.append(aboutModal);
 
+  const advanced = renderAdvancedModal(store);
+  document.body.append(advanced.root);
+
   const app = el("div", "app");
   const work = el("div", "work");
-  const { viewport, roster } = buildViewport(store);
+  const { viewport, roster } = buildViewport(store, () => advanced.open());
   const views = viewport.querySelectorAll<HTMLElement>(".view");
   const viewByKey: Record<string, HTMLElement> = {};
   const keys = ["source", "params", "caption", "roster", "execute"];

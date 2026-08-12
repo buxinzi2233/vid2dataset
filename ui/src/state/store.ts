@@ -67,11 +67,16 @@ export class Store {
   }
 
   buildConfig(): Partial<ExtractConfig> & { input: string; output: string } {
+    const segments: Record<string, [number, number][]> = {};
+    for (const [name, segs] of Object.entries(this.segments)) {
+      if (segs.length) segments[name] = segs.map((s) => [s.start, s.end]);
+    }
     return {
       input: this.inputPath || "output",
       output: this.outputPath || "output",
       ...this.config,
-    };
+      segments,
+    } as unknown as Partial<ExtractConfig> & { input: string; output: string };
   }
 
   async start(): Promise<void> {
