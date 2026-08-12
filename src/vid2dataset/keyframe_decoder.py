@@ -1,8 +1,8 @@
 """Fast keyframe extraction via ffmpeg.
 
-Uses imageio-ffmpeg's bundled ffmpeg binary to decode only I-frames
-(keyframes) from a video. This is 5-20x faster than OpenCV seek-based
-extraction for keyframe-only sampling.
+Uses FFmpeg to decode only I-frames (keyframes) from a video. The bundled
+imageio-ffmpeg binary is the portable CPU fallback; when hardware decoding is
+requested, a system FFmpeg with the matching hwaccel is preferred.
 """
 
 from __future__ import annotations
@@ -24,23 +24,73 @@ log = logging.getLogger(__name__)
 _NO_WINDOW = 0x08000000 if _sys.platform == 'win32' else 0
 
 
-def _ffmpeg_exe() -> str | None:
-    """Return path to ffmpeg binary, or None if not available."""
+def _ffmpeg_candidates() -> list[str]:
+    """Return usable FFmpeg binaries in portable-fallback order."""
+    candidates: list[str] = []
     try:
         import imageio_ffmpeg
         exe = imageio_ffmpeg.get_ffmpeg_exe()
         if exe and Path(exe).exists():
-            return exe
+            candidates.append(exe)
     except Exception:
         pass
     sys_ffmpeg = shutil.which("ffmpeg")
-    if sys_ffmpeg:
-        return sys_ffmpeg
+    if sys_ffmpeg and sys_ffmpeg not in candidates:
+        candidates.append(sys_ffmpeg)
+    return candidates
+
+
+def _list_hwaccels_for(exe: str) -> list[str]:
+    """Return hardware acceleration methods compiled into one FFmpeg."""
+    try:
+        result = subprocess.run(
+            [exe, "-hide_banner", "-hwaccels"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            creationflags=_NO_WINDOW,
+        )
+        return [
+            line.strip()
+            for line in result.stdout.splitlines()
+            if line.strip() and ":" not in line
+        ]
+    except Exception as e:
+        log.debug("Failed to list hwaccels for %s: %s", exe, e)
+        return []
+
+
+def _ffmpeg_exe(hwaccel: str | None = None) -> str | None:
+    """Return an FFmpeg binary, optionally requiring a specific hwaccel."""
+    candidates = _ffmpeg_candidates()
+    if hwaccel is None:
+        return candidates[0] if candidates else None
+    for exe in candidates:
+        if hwaccel in _list_hwaccels_for(exe):
+            return exe
     return None
 
 
 def has_ffmpeg() -> bool:
     return _ffmpeg_exe() is not None
+
+
+def _keyframe_decode_command(
+    exe: str,
+    video_path: Path,
+    vf: str,
+    hwaccel: str | None,
+) -> list[str]:
+    """Build the streaming keyframe command for modern and bundled FFmpeg."""
+    cmd = [exe, "-hide_banner", "-loglevel", "error"]
+    if hwaccel:
+        cmd.extend(["-hwaccel", hwaccel])
+    cmd.extend([
+        "-i", str(video_path),
+        "-vf", vf, "-fps_mode", "vfr", "-an",
+        "-f", "rawvideo", "-pix_fmt", "bgr24", "-",
+    ])
+    return cmd
 
 
 def probe_resolution(video_path: Path) -> tuple[int, int]:
@@ -73,8 +123,10 @@ def extract_keyframes(
     hwaccel: str | None = None,
 ) -> Iterator[tuple[float, np.ndarray]]:
     """Yield (timestamp_seconds, frame_bgr) for I-frames via ffmpeg pipe."""
-    exe = _ffmpeg_exe()
+    exe = _ffmpeg_exe(hwaccel)
     if not exe:
+        if hwaccel:
+            raise OSError(f"No FFmpeg binary supports hwaccel '{hwaccel}'")
         raise ImportError("ffmpeg not available. Install imageio-ffmpeg.")
 
     width, height = probe_resolution(video_path)
@@ -92,14 +144,7 @@ def extract_keyframes(
         vf_parts.append(f"scale={out_w}:{out_h}")
     vf = ",".join(vf_parts)
 
-    cmd = [exe, "-hide_banner", "-loglevel", "error"]
-    if hwaccel:
-        cmd.extend(["-hwaccel", hwaccel])
-    cmd.extend([
-        "-i", str(video_path),
-        "-vf", vf, "-vsync", "vfr", "-an",
-        "-f", "rawvideo", "-pix_fmt", "bgr24", "-",
-    ])
+    cmd = _keyframe_decode_command(exe, video_path, vf, hwaccel)
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         bufsize=10**8, creationflags=_NO_WINDOW,
@@ -179,23 +224,13 @@ def extract_at_timestamps(
 
 
 def list_hwaccels() -> list[str]:
-    """Return list of hwaccel methods compiled into the bundled ffmpeg."""
-    exe = _ffmpeg_exe()
-    if not exe:
-        return []
-    try:
-        result = subprocess.run(
-            [exe, "-hide_banner", "-hwaccels"],
-            capture_output=True, text=True, timeout=5,
-            creationflags=_NO_WINDOW,
-        )
-        out = result.stdout.splitlines()
-        # Skip the 'Hardware acceleration methods:' header
-        methods = [line.strip() for line in out if line.strip() and ":" not in line]
-        return methods
-    except Exception as e:
-        log.warning("Failed to list hwaccels: %s", e)
-        return []
+    """Return the union of hwaccels available across all FFmpeg binaries."""
+    methods: list[str] = []
+    for exe in _ffmpeg_candidates():
+        for method in _list_hwaccels_for(exe):
+            if method not in methods:
+                methods.append(method)
+    return methods
 
 
 def validate_hwaccel(video_path: Path, hwaccel: str, *, timeout: float = 10.0) -> bool:
@@ -206,8 +241,9 @@ def validate_hwaccel(video_path: Path, hwaccel: str, *, timeout: float = 10.0) -
     is producing the same frames as CPU \u2014 safe to use. If the diff is large or
     hwaccel errors out, return False.
     """
-    exe = _ffmpeg_exe()
+    exe = _ffmpeg_exe(hwaccel)
     if not exe:
+        log.warning("No FFmpeg binary supports hwaccel '%s'", hwaccel)
         return False
 
     width, height = probe_resolution(video_path)
