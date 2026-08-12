@@ -9,12 +9,24 @@ import sysconfig
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-TAURI_CLI = REPO_ROOT / "ui" / "node_modules" / ".bin" / "tauri"
+
+
+def _tauri_cli() -> Path:
+    """Resolve the platform-specific Tauri CLI shim under ui/node_modules."""
+    bin_dir = REPO_ROOT / "ui" / "node_modules" / ".bin"
+    if sys.platform == "win32":
+        for name in ("tauri.cmd", "tauri.exe", "tauri.ps1"):
+            candidate = bin_dir / name
+            if candidate.is_file():
+                return candidate
+    candidate = bin_dir / "tauri"
+    if candidate.is_file():
+        return candidate
+    raise SystemExit("Tauri CLI is not installed; run pnpm install in ui first")
 
 
 def main() -> int:
-    if not TAURI_CLI.is_file():
-        raise SystemExit("Tauri CLI is not installed; run pnpm install in ui first")
+    tauri_cli = _tauri_cli()
 
     env = os.environ.copy()
     if len(sys.argv) > 1 and sys.argv[1] == "dev":
@@ -37,7 +49,13 @@ def main() -> int:
         # not understand RELR sections emitted by rolling-release toolchains.
         env.setdefault("NO_STRIP", "1")
 
-    return subprocess.call([str(TAURI_CLI), *sys.argv[1:]], cwd=REPO_ROOT, env=env)
+    args = list(sys.argv[1:])
+    if sys.platform == "win32" and tauri_cli.suffix.lower() in {".cmd", ".bat"}:
+        # npm/pnpm Windows shims are batch files; invoke via cmd.exe.
+        cmd = ["cmd", "/c", str(tauri_cli), *args]
+    else:
+        cmd = [str(tauri_cli), *args]
+    return subprocess.call(cmd, cwd=REPO_ROOT, env=env)
 
 
 if __name__ == "__main__":

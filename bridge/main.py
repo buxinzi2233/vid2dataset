@@ -34,6 +34,9 @@ _cancel_event: threading.Event | None = None
 _run_lock = threading.Lock()
 _gpu_download_lock = threading.Lock()
 _gpu_download_active = False
+# Serialize stdout writes: every request is dispatched on its own thread, so
+# concurrent json.dumps + write/flush pairs can otherwise interleave frames.
+_stdout_lock = threading.Lock()
 
 
 # ── Method handlers ─────────────────────────────────────────────────────
@@ -535,8 +538,10 @@ METHODS: dict[str, Callable[[dict], object]] = {
 
 
 def _write(obj: dict) -> None:
-    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
-    sys.stdout.flush()
+    line = json.dumps(obj, ensure_ascii=False) + "\n"
+    with _stdout_lock:
+        sys.stdout.write(line)
+        sys.stdout.flush()
 
 
 def _dispatch(req: dict) -> None:

@@ -1,9 +1,7 @@
 //! config domain commands: version, language, prefs, presets, folder browse.
 //!
-//! `list_presets` and `config_defaults` forward to the live sidecar methods;
-//! the rest are stubs with typed signatures (see `docs/api-contract.md` §3).
-
-#![allow(dead_code)] // stub arg fields become live when the feature tasks land.
+//! Prefs are stored in `~/.vid2dataset.json` (same path as the legacy GUI).
+//! Preset/config queries forward to the Python sidecar.
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -11,6 +9,7 @@ use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::bridge::protocol::ErrorInfo;
+use crate::prefs;
 use crate::state::AppState;
 
 const VERSION: &str = "1.2.0";
@@ -28,13 +27,12 @@ pub struct SetLangArgs {
 
 #[tauri::command]
 pub fn get_lang() -> Result<String, String> {
-    Err("get_lang: not implemented in scaffold".into())
+    Ok(prefs::load_lang())
 }
 
 #[tauri::command]
 pub fn set_lang(args: SetLangArgs) -> Result<(), String> {
-    let _ = args;
-    Err("set_lang: not implemented in scaffold".into())
+    prefs::save_lang(&args.lang)
 }
 
 #[derive(Deserialize)]
@@ -45,13 +43,13 @@ pub struct SetPrefsArgs {
 
 #[tauri::command]
 pub fn get_prefs() -> Result<Value, String> {
-    Err("get_prefs: not implemented in scaffold".into())
+    Ok(prefs::load_prefs())
 }
 
 #[tauri::command]
 pub fn set_prefs(args: SetPrefsArgs) -> Result<(), String> {
-    let _ = args;
-    Err("set_prefs: not implemented in scaffold".into())
+    prefs::save_prefs(&args.prefs)?;
+    Ok(())
 }
 
 /// List built-in presets from the live sidecar (`presets.list`).
@@ -169,15 +167,21 @@ pub fn config_validate(
 }
 
 /// Open a native folder picker; returns the chosen path or null when cancelled.
+///
+/// Runs the blocking dialog on a worker thread so the async runtime stays free.
 #[tauri::command]
-pub async fn browse_folder(_app: AppHandle) -> Result<Option<String>, String> {
-    _app.dialog()
-        .file()
-        .blocking_pick_folder()
-        .map(|path| {
-            path.into_path()
-                .map(|path| path.to_string_lossy().into_owned())
-                .map_err(|e| format!("invalid selected folder: {e}"))
-        })
-        .transpose()
+pub async fn browse_folder(app: AppHandle) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .blocking_pick_folder()
+            .map(|path| {
+                path.into_path()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .map_err(|e| format!("invalid selected folder: {e}"))
+            })
+            .transpose()
+    })
+    .await
+    .map_err(|e| format!("dialog task failed: {e}"))?
 }

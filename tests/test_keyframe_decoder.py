@@ -7,6 +7,11 @@ from pathlib import Path
 from vid2dataset import keyframe_decoder as kd
 
 
+def _path_matches(path: Path | str, expected: str) -> bool:
+    """Compare paths in a Windows/POSIX-stable way for monkeypatched exists()."""
+    return Path(path).as_posix() == Path(expected).as_posix()
+
+
 def test_ffmpeg_candidates_keep_bundled_fallback_and_system(
     monkeypatch,
 ) -> None:
@@ -18,7 +23,8 @@ def test_ffmpeg_candidates_keep_bundled_fallback_and_system(
             return bundled
 
     monkeypatch.setitem(__import__("sys").modules, "imageio_ffmpeg", FakeImageioFFmpeg)
-    monkeypatch.setattr(Path, "exists", lambda self: str(self) == bundled)
+    # Path("/opt/...") stringifies with backslashes on Windows, so compare via as_posix().
+    monkeypatch.setattr(Path, "exists", lambda self: _path_matches(self, bundled))
     monkeypatch.setattr(kd.shutil, "which", lambda name: "/usr/bin/ffmpeg")
 
     assert kd._ffmpeg_candidates() == [bundled, "/usr/bin/ffmpeg"]
@@ -33,7 +39,7 @@ def test_ffmpeg_candidates_deduplicate_same_binary(monkeypatch) -> None:
             return executable
 
     monkeypatch.setitem(__import__("sys").modules, "imageio_ffmpeg", FakeImageioFFmpeg)
-    monkeypatch.setattr(Path, "exists", lambda self: str(self) == executable)
+    monkeypatch.setattr(Path, "exists", lambda self: _path_matches(self, executable))
     monkeypatch.setattr(kd.shutil, "which", lambda name: executable)
 
     assert kd._ffmpeg_candidates() == [executable]

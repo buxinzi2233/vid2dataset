@@ -70,6 +70,10 @@ async function enableBrowserPreview(): Promise<void> {
       return { name, description: "", user: true, path: `/tmp/${name}.toml` };
     }
     if (command === "config_validate") return { valid: true, errors: [] };
+    if (command === "get_prefs") return { lang: "zh" };
+    if (command === "set_prefs") return null;
+    if (command === "get_lang") return "zh";
+    if (command === "set_lang") return null;
     if (command === "tagger_status") return { available: false, size_mb: 1200 };
     if (command === "check_update") return { available: false };
     if (command === "plugin:event|listen") return 1;

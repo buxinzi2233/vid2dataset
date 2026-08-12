@@ -52,21 +52,44 @@ pub struct SidecarPaths {
 }
 
 impl SidecarPaths {
+    /// Locate a bundled interpreter under `runtime/python` (Linux AppImage layout
+    /// or a Windows-style tree with `python.exe` / `Scripts/python.exe`).
     fn bundled(resource_dir: &Path) -> Option<Self> {
         let runtime = resource_dir.join("runtime/python");
-        let mut interpreters = std::fs::read_dir(runtime.join("bin"))
-            .ok()?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.is_file()
-                    && path
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .is_some_and(|name| name.starts_with("python3."))
-            })
-            .collect::<Vec<_>>();
+        let mut interpreters: Vec<PathBuf> = Vec::new();
+
+        // Linux / unix relocatable layout: runtime/python/bin/python3.x
+        if let Ok(entries) = std::fs::read_dir(runtime.join("bin")) {
+            interpreters.extend(
+                entries
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.path())
+                    .filter(|path| {
+                        path.is_file()
+                            && path
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .is_some_and(|name| {
+                                    name.starts_with("python3.") || name == "python3" || name == "python"
+                                })
+                    }),
+            );
+        }
+
+        // Windows-style layouts used by embeddable CPython / venv copies.
+        for candidate in [
+            runtime.join("python.exe"),
+            runtime.join("python"),
+            runtime.join("Scripts/python.exe"),
+            runtime.join("Scripts/python"),
+        ] {
+            if candidate.is_file() {
+                interpreters.push(candidate);
+            }
+        }
+
         interpreters.sort();
+        // Prefer the highest-sorted python3.x on Unix; on Windows the .exe paths win by sort.
         let python = interpreters.pop()?;
         let script = resource_dir.join("bridge/main.py");
         let python_path = resource_dir.join("python");
@@ -86,11 +109,38 @@ impl SidecarPaths {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("src-tauri must live inside the repository");
+        // Dev layout differs by OS: Windows uses venv\Scripts\python.exe.
+        let mut candidates = if cfg!(windows) {
+            vec![
+                repo_root.join("venv/Scripts/python.exe"),
+                repo_root.join("venv/Scripts/python"),
+            ]
+        } else {
+            vec![
+                repo_root.join("venv/bin/python"),
+                repo_root.join("venv/bin/python3"),
+            ]
+        };
+        // Fall back to whatever `python` is on PATH for ad-hoc dev machines.
+        if let Ok(path) = which_python() {
+            candidates.push(path);
+        }
+        let python = candidates
+            .into_iter()
+            .find(|path| path.is_file())
+            .unwrap_or_else(|| {
+                if cfg!(windows) {
+                    repo_root.join("venv/Scripts/python.exe")
+                } else {
+                    repo_root.join("venv/bin/python")
+                }
+            });
         Self {
-            python: repo_root.join("venv/bin/python"),
+            python,
             script: repo_root.join("bridge/main.py"),
             python_home: None,
-            python_path: None,
+            // Ensure `import vid2dataset` works even without `pip install -e .`.
+            python_path: Some(repo_root.join("src")),
         }
     }
 
@@ -139,11 +189,54 @@ impl SidecarPaths {
                     command.env("LD_LIBRARY_PATH", value);
                 }
             }
+            #[cfg(windows)]
+            {
+                // Embeddable / venv CPython often needs its own root on PATH for DLLs.
+                let mut paths = vec![home.clone(), home.join("Scripts"), home.join("DLLs")];
+                if let Some(existing) = std::env::var_os("PATH") {
+                    paths.extend(std::env::split_paths(&existing));
+                }
+                if let Ok(value) = std::env::join_paths(paths) {
+                    command.env("PATH", value);
+                }
+            }
         }
         if let Some(path) = &self.python_path {
-            command.env("PYTHONPATH", path);
+            // Prepend so the engine package wins without hiding site-packages.
+            let mut paths = vec![path.clone()];
+            if let Some(existing) = std::env::var_os("PYTHONPATH") {
+                paths.extend(std::env::split_paths(&existing));
+            }
+            if let Ok(value) = std::env::join_paths(paths) {
+                command.env("PYTHONPATH", value);
+            }
         }
     }
+}
+
+/// Best-effort lookup of a `python` / `python3` executable on PATH.
+fn which_python() -> Result<PathBuf, ()> {
+    let names: &[&str] = if cfg!(windows) {
+        &["python.exe", "python"]
+    } else {
+        &["python3", "python"]
+    };
+    for name in names {
+        if let Ok(path) = std::process::Command::new(if cfg!(windows) { "where" } else { "which" })
+            .arg(name)
+            .output()
+        {
+            if path.status.success() {
+                if let Some(line) = String::from_utf8_lossy(&path.stdout).lines().next() {
+                    let candidate = PathBuf::from(line.trim());
+                    if candidate.is_file() {
+                        return Ok(candidate);
+                    }
+                }
+            }
+        }
+    }
+    Err(())
 }
 
 impl Bridge {

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../api/ipc", () => ({
   cancelRun: vi.fn(),
   discoverVideos: vi.fn(),
+  getPrefs: vi.fn(async () => ({})),
   gpuDetect: vi.fn(),
   gpuDownload: vi.fn(),
   gpuStatus: vi.fn(),
@@ -15,15 +16,30 @@ vi.mock("../api/ipc", () => ({
     : { resolution: 768, bucket_step: 64, max_per_video: 10 }),
   probeVideo: vi.fn(),
   runTagger: vi.fn(),
-  savePreset: vi.fn(async (name: string, description: string) => ({ name, description, user: true, path: `/tmp/${name}.toml` })),
+  savePreset: vi.fn(async (name: string, description: string) => ({
+    name,
+    description,
+    user: true,
+    path: `/tmp/${name}.toml`,
+  })),
+  setPrefs: vi.fn(async () => undefined),
   startRun: vi.fn(),
   taggerDownload: vi.fn(),
   taggerStatus: vi.fn(),
 }));
 
 import { Store } from "./store";
-import { loadPreset } from "../api/ipc";
-import { gpuDownload, gpuStatus, listPresets, savePreset, startRun } from "../api/ipc";
+import {
+  getPrefs,
+  gpuDetect,
+  gpuDownload,
+  gpuStatus,
+  listPresets,
+  loadPreset,
+  savePreset,
+  setPrefs,
+  startRun,
+} from "../api/ipc";
 
 describe("Store", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -34,6 +50,31 @@ describe("Store", () => {
     expect(store.presetName).toBe("anima-style");
     expect(store.presetDescription()).toBe("Style");
     expect(store.config.resolution).toBe(1024);
+  });
+
+  it("hydrates paths and lang from persisted prefs", async () => {
+    vi.mocked(getPrefs).mockResolvedValueOnce({
+      lang: "en",
+      input: "/videos",
+      output: "/dataset",
+      preset: "fast-preview",
+    });
+    const store = new Store();
+    await store.init();
+    expect(store.lang).toBe("en");
+    expect(store.inputPath).toBe("/videos");
+    expect(store.outputPath).toBe("/dataset");
+    expect(store.presetName).toBe("fast-preview");
+    expect(store.config.resolution).toBe(768);
+  });
+
+  it("persists prefs when paths change", () => {
+    const store = new Store();
+    store.setInputPath("/in");
+    store.setOutputPath("/out");
+    expect(setPrefs).toHaveBeenCalled();
+    const last = vi.mocked(setPrefs).mock.calls.at(-1)?.[0];
+    expect(last).toMatchObject({ input: "/in", output: "/out" });
   });
 
   it("serializes segments into the extraction config", () => {
@@ -49,7 +90,9 @@ describe("Store", () => {
 
   it("synchronizes the preset name immediately and ignores stale responses", async () => {
     const pending = new Map<string, (value: { resolution: number }) => void>();
-    vi.mocked(loadPreset).mockImplementation((name: string) => new Promise((resolve) => pending.set(name, resolve)) as never);
+    vi.mocked(loadPreset).mockImplementation(
+      (name: string) => new Promise((resolve) => pending.set(name, resolve)) as never,
+    );
     const store = new Store();
     const snapshots: string[] = [];
     store.subscribe(() => snapshots.push(store.presetName));
@@ -90,6 +133,7 @@ describe("Store", () => {
     expect(store.presets).toEqual([
       { name: "my-v100", description: "GPU", user: true, path: "/tmp/my-v100.toml" },
     ]);
+    expect(setPrefs).toHaveBeenCalled();
   });
 
   it("does not download when the current CUDA runtime is already available", async () => {
@@ -102,10 +146,13 @@ describe("Store", () => {
       cuda_tag: "cu126",
       can_download: false,
     });
-    const { gpuDetect } = await import("../api/ipc");
     vi.mocked(gpuDetect).mockResolvedValue({
-      vendor: "NVIDIA", gpu_name: "Tesla V100", arch: "", compute_cap: 7.0,
-      os_name: "linux", os_arch: "x86_64",
+      vendor: "NVIDIA",
+      gpu_name: "Tesla V100",
+      arch: "",
+      compute_cap: 7.0,
+      os_name: "linux",
+      os_arch: "x86_64",
     });
     const store = new Store();
 

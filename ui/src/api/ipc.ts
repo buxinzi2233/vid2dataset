@@ -27,6 +27,22 @@ export function setLang(lang: string): Promise<void> {
   return invoke("set_lang", { args: { lang } });
 }
 
+export interface Prefs {
+  lang?: "en" | "zh";
+  input?: string;
+  output?: string;
+  preset?: string;
+  [key: string]: unknown;
+}
+
+export function getPrefs(): Promise<Prefs> {
+  return invoke("get_prefs");
+}
+
+export function setPrefs(prefs: Prefs): Promise<void> {
+  return invoke("set_prefs", { args: { prefs } });
+}
+
 export function browseFolder(): Promise<string | null> {
   return invoke("browse_folder");
 }

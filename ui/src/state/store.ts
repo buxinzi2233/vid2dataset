@@ -7,6 +7,7 @@ import type { HardwareProfile, RuntimeStatus, TaggerStatus, VideoMeta } from "..
 import {
   cancelRun,
   discoverVideos,
+  getPrefs,
   gpuDetect,
   gpuDownload,
   gpuStatus,
@@ -14,11 +15,13 @@ import {
   loadPreset,
   probeVideo,
   runTagger as invokeTagger,
+  setPrefs,
   startRun,
   savePreset as savePresetIpc,
   taggerDownload,
   taggerStatus,
 } from "../api/ipc";
+import type { Prefs as StoredPrefs } from "../api/ipc";
 import { RunState } from "./runState";
 
 export interface PresetInfo {
@@ -119,17 +122,57 @@ export class Store {
   }
 
   async init(): Promise<void> {
+    await this.hydratePrefs();
     this.presets = await listPresets();
-    const initial = this.presets.some((preset) => preset.name === "anima-style")
-      ? "anima-style"
-      : this.presets[0]?.name;
+    const fromPrefs = this.prefs.preset;
+    const initial =
+      (fromPrefs && this.presets.some((preset) => preset.name === fromPrefs) ? fromPrefs : undefined)
+      ?? (this.presets.some((preset) => preset.name === "anima-style") ? "anima-style" : this.presets[0]?.name);
     if (initial) await this.applyPreset(initial);
+  }
+
+  /** Load `~/.vid2dataset.json` via Rust (shared with the legacy GUI). */
+  private async hydratePrefs(): Promise<void> {
+    try {
+      const saved = await getPrefs();
+      if (saved.lang === "en" || saved.lang === "zh") {
+        this.lang = saved.lang;
+        this.prefs.lang = saved.lang;
+      }
+      if (typeof saved.input === "string" && saved.input) {
+        this.inputPath = saved.input;
+        this.prefs.input = saved.input;
+      }
+      if (typeof saved.output === "string" && saved.output) {
+        this.outputPath = saved.output;
+        this.prefs.output = saved.output;
+      }
+      if (typeof saved.preset === "string" && saved.preset) {
+        this.prefs.preset = saved.preset;
+      }
+    } catch {
+      // Browser preview / scaffold without prefs — keep in-memory defaults.
+    }
+  }
+
+  /** Persist core prefs without wiping legacy-only keys on disk. */
+  private persistPrefs(): void {
+    const payload: StoredPrefs = {
+      lang: this.lang,
+      input: this.inputPath || undefined,
+      output: this.outputPath || undefined,
+      preset: this.presetName || this.prefs.preset,
+    };
+    void setPrefs(payload).catch(() => {
+      /* non-fatal in preview / headless */
+    });
   }
 
   async applyPreset(name: string): Promise<void> {
     const request = ++this.presetRequest;
     this.presetName = name;
     this.prefs.preset = name;
+    this.persistPrefs();
     this.notify();
     const config = await loadPreset(name);
     if (request !== this.presetRequest) return;
@@ -146,6 +189,7 @@ export class Store {
       : [...listed, saved].sort((a, b) => a.name.localeCompare(b.name));
     this.presetName = saved.name;
     this.prefs.preset = saved.name;
+    this.persistPrefs();
     this.notify();
     return saved.name;
   }
@@ -165,18 +209,21 @@ export class Store {
     }
     this.inputPath = p;
     this.prefs.input = p;
+    this.persistPrefs();
     this.notify();
   }
 
   setOutputPath(p: string): void {
     this.outputPath = p;
     this.prefs.output = p;
+    this.persistPrefs();
     this.notify();
   }
 
   setLang(lang: "en" | "zh"): void {
     this.lang = lang;
     this.prefs.lang = lang;
+    this.persistPrefs();
     this.notify();
   }
 
