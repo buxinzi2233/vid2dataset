@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 from vid2dataset import gpu_runtime as gr
 from vid2dataset.gpu_runtime import (
@@ -95,6 +96,21 @@ def test_runtime_supported_matrix() -> None:
     assert ok is False and reason
 
 
+def test_linux_pci_fallback_prefers_nvidia_over_primary_amd(monkeypatch) -> None:
+    monkeypatch.setattr(gr, "_nvidia_smi", lambda: {})
+    monkeypatch.setattr(gr, "detect_os", lambda: ("linux", "x86_64"))
+    monkeypatch.setattr(
+        gr,
+        "_run_cmd",
+        lambda _args: "\n".join((
+            "04:00.0 VGA compatible controller: AMD Radeon RX 5500",
+            "05:00.0 3D controller: NVIDIA Corporation Tesla V100",
+        )),
+    )
+
+    assert gr.detect_gpu().vendor == "NVIDIA"
+
+
 # ── Pin consistency (guards against bumping one constant and not the rest) ─
 
 
@@ -159,7 +175,12 @@ def test_clear_stale_cache_keeps_matching_build(tmp_path, monkeypatch) -> None:
     extracted.parent.mkdir()
     extracted.write_text("current", encoding="utf-8")
     (tmp_path / gr.MANIFEST_FILE).write_text(
-        json.dumps({"version": gr.RUNTIME_VERSION, "cuda_tag": "cu126"}),
+        json.dumps({
+            "version": gr.RUNTIME_VERSION,
+            "cuda_tag": "cu126",
+            "platform": gr.sys.platform,
+            "python_tag": gr._py_tag(),
+        }),
         encoding="utf-8",
     )
     gr._clear_stale_cache({}, "cu126")
@@ -173,7 +194,12 @@ def test_clear_stale_cache_wipes_on_tag_mismatch(tmp_path, monkeypatch) -> None:
     extracted.parent.mkdir()
     extracted.write_text("cu126 build", encoding="utf-8")
     (tmp_path / gr.MANIFEST_FILE).write_text(
-        json.dumps({"version": gr.RUNTIME_VERSION, "cuda_tag": "cu126"}),
+        json.dumps({
+            "version": gr.RUNTIME_VERSION,
+            "cuda_tag": "cu126",
+            "platform": gr.sys.platform,
+            "python_tag": gr._py_tag(),
+        }),
         encoding="utf-8",
     )
     gr._clear_stale_cache({}, "cu128")
@@ -207,12 +233,68 @@ def test_runtime_status_exposes_cuda_tag(tmp_path, monkeypatch) -> None:
     (tmp_path / "torch").mkdir()
     (tmp_path / "torch" / "__init__.py").write_text("", encoding="utf-8")
     (tmp_path / gr.MANIFEST_FILE).write_text(
-        json.dumps({"version": gr.RUNTIME_VERSION, "cuda_tag": "cu128"}),
+        json.dumps({
+            "version": gr.RUNTIME_VERSION,
+            "cuda_tag": "cu128",
+            "platform": gr.sys.platform,
+            "python_tag": gr._py_tag(),
+        }),
         encoding="utf-8",
     )
+    monkeypatch.setitem(
+        gr.sys.modules,
+        "torch",
+        SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False)),
+    )
+    monkeypatch.setattr(gr, "activate_runtime", lambda: (True, ""))
     st = gr.runtime_status()
     assert st.cached is True
     assert st.cuda_tag == "cu128"
+    assert st.available is True
+
+
+def test_runtime_status_activates_cached_cuda_over_cpu_torch(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gr, "RUNTIME_DIR", tmp_path)
+    (tmp_path / "torch").mkdir()
+    (tmp_path / "torch" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / gr.MANIFEST_FILE).write_text(
+        json.dumps({
+            "version": gr.RUNTIME_VERSION,
+            "cuda_tag": "cu126",
+            "platform": gr.sys.platform,
+            "python_tag": gr._py_tag(),
+        }),
+        encoding="utf-8",
+    )
+    activated = []
+    monkeypatch.setitem(
+        gr.sys.modules,
+        "torch",
+        SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False)),
+    )
+    monkeypatch.setattr(gr, "activate_runtime", lambda: (activated.append(True) or True, ""))
+
+    st = gr.runtime_status()
+
+    assert activated == [True]
+    assert st.available is True
+
+
+def test_runtime_status_rejects_foreign_platform_cache(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gr, "RUNTIME_DIR", tmp_path)
+    (tmp_path / "torch").mkdir()
+    (tmp_path / "torch" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / gr.MANIFEST_FILE).write_text(
+        json.dumps({
+            "version": gr.RUNTIME_VERSION,
+            "cuda_tag": "cu126",
+            "platform": "win32" if gr.sys.platform != "win32" else "linux",
+            "python_tag": gr._py_tag(),
+        }),
+        encoding="utf-8",
+    )
+
+    assert gr.runtime_status().cached is False
 
 
 def test_runtime_status_old_manifest_not_cached(tmp_path, monkeypatch) -> None:

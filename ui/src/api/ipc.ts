@@ -1,0 +1,231 @@
+//! Typed Tauri invoke wrappers — the single entry point to Rust commands.
+//! Command surface mirrors `docs/api-contract.md` §3.
+
+import { invoke } from "@tauri-apps/api/core";
+import type { ExtractConfig } from "./types";
+
+export interface PresetInfo {
+  name: string;
+  description: string;
+  user?: boolean;
+}
+
+export interface SavedPreset extends PresetInfo {
+  user: true;
+  path: string;
+}
+
+export function getVersion(): Promise<string> {
+  return invoke("get_version");
+}
+
+export function getLang(): Promise<string> {
+  return invoke("get_lang");
+}
+
+export function setLang(lang: string): Promise<void> {
+  return invoke("set_lang", { args: { lang } });
+}
+
+export interface Prefs {
+  lang?: "en" | "zh";
+  input?: string;
+  output?: string;
+  preset?: string;
+  [key: string]: unknown;
+}
+
+export function getPrefs(): Promise<Prefs> {
+  return invoke("get_prefs");
+}
+
+export function setPrefs(prefs: Prefs): Promise<void> {
+  return invoke("set_prefs", { args: { prefs } });
+}
+
+export function browseFolder(): Promise<string | null> {
+  return invoke("browse_folder");
+}
+
+export function listPresets(): Promise<PresetInfo[]> {
+  return invoke("list_presets");
+}
+
+export function loadPreset(name: string): Promise<Partial<ExtractConfig>> {
+  return invoke("load_preset", { args: { name } });
+}
+
+export function savePreset(name: string, description: string, config: Partial<ExtractConfig>): Promise<SavedPreset> {
+  return invoke("save_preset", { args: { name, description, config } });
+}
+
+export function configDefaults(): Promise<Record<string, unknown>> {
+  return invoke("config_defaults");
+}
+
+export interface ConfigError {
+  field: string;
+  message: string;
+}
+
+export interface ValidateResult {
+  valid: boolean;
+  errors: ConfigError[];
+}
+
+export function validateConfig(config: Partial<ExtractConfig>): Promise<ValidateResult> {
+  return invoke("config_validate", { args: { config } });
+}
+
+export function discoverVideos(path: string): Promise<string[]> {
+  return invoke("discover_videos", { args: { path } });
+}
+
+export function probeVideo(path: string): Promise<VideoMeta> {
+  return invoke("probe_video", { args: { path } });
+}
+
+export function startRun(config: ExtractConfig): Promise<{ started: boolean }> {
+  return invoke("start_run", { args: { config } });
+}
+
+export function cancelRun(): Promise<{ cancelled: boolean }> {
+  return invoke("cancel_run");
+}
+
+export function checkUpdate(): Promise<unknown> {
+  return invoke("check_update");
+}
+
+export interface UpdateInfo {
+  available: boolean;
+  tag?: string;
+  version?: string;
+  name?: string;
+  notes?: string;
+  exe_url?: string | null;
+  exe_size?: number;
+}
+
+export function checkUpdateInfo(): Promise<UpdateInfo> {
+  return invoke("check_update");
+}
+
+export function installUpdate(): Promise<{ installed: boolean; reason?: string }> {
+  return invoke("install_update");
+}
+
+export function gpuDownload(): Promise<DownloadStart> {
+  return invoke("gpu_download");
+}
+
+export function openFolder(path: string): Promise<{ opened: string }> {
+  return invoke("open_folder", { args: { path } });
+}
+
+/** Structured error surfaced by Rust commands (serde-serialized error type). */
+export interface CommandError {
+  code: string;
+  message: string;
+}
+
+/** Extract a structured error from a rejected invoke if possible. */
+export function asCommandError(e: unknown): CommandError | null {
+  if (e && typeof e === "object" && "code" in e && "message" in e) {
+    const c = e as { code: unknown; message: unknown };
+    if (typeof c.code === "string" && typeof c.message === "string") {
+      return { code: c.code, message: c.message };
+    }
+  }
+  return null;
+}
+
+export function advOpen(path: string): Promise<VideoMeta> {
+  return invoke("adv_open", { args: { path } });
+}
+
+export function advSeek(path: string, frame: number): Promise<{ frame_b64: string }> {
+  return invoke("adv_seek", { args: { path, frame } });
+}
+
+export function advCapture(path: string, frame: number, config: ExtractConfig): Promise<{ out_path: string }> {
+  return invoke("adv_capture", { args: { path, frame, config } });
+}
+
+export function advSegments(segments: Record<string, [number, number][]>): Promise<{ saved: boolean }> {
+  return invoke("adv_segments", { args: { segments } });
+}
+
+export interface VideoMeta {
+  path: string;
+  fps: number;
+  frame_count: number;
+  width: number;
+  height: number;
+  duration_s: number;
+}
+
+export interface HardwareProfile {
+  vendor: string;
+  gpu_name: string;
+  arch: string;
+  compute_cap: number;
+  os_name: string;
+  os_arch: string;
+}
+
+export interface RuntimeStatus {
+  available: boolean;
+  cached: boolean;
+  version: string | null;
+  cache_dir: string;
+  size_mb: number;
+  cuda_tag: string | null;
+  error?: string | null;
+  can_download?: boolean;
+}
+
+export function gpuDetect(): Promise<HardwareProfile> {
+  return invoke("gpu_detect");
+}
+
+export function gpuStatus(): Promise<RuntimeStatus> {
+  return invoke("gpu_status");
+}
+
+export interface DownloadStart {
+  started: boolean;
+  available?: boolean;
+  downloading?: boolean;
+}
+
+export interface TaggerRunArgs {
+  folder: string;
+  modelName?: string;
+  triggerWord?: string;
+  blacklist?: string;
+  require?: string;
+  exclude?: string;
+  always?: string;
+  traitPruneThreshold?: number;
+  generalThreshold?: number;
+  characterThreshold?: number;
+  useGpu?: boolean;
+}
+
+export interface TaggerStatus {
+  available: boolean;
+  size_mb: number;
+}
+
+export function taggerStatus(model: string): Promise<TaggerStatus> {
+  return invoke("tagger_status", { args: { model } });
+}
+
+export function taggerDownload(model: string): Promise<DownloadStart> {
+  return invoke("tagger_download", { args: { model } });
+}
+
+export function runTagger(args: TaggerRunArgs): Promise<{ started: boolean }> {
+  return invoke("tagger_run", { args });
+}

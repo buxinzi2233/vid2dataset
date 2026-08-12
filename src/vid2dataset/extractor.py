@@ -685,9 +685,12 @@ def run_pipeline(
             log.info("Probing GPU acceleration on sample video...")
             selected_hwaccel = auto_select_hwaccel(sample_videos[0])
             if selected_hwaccel:
-                log.info("GPU acceleration: %s", selected_hwaccel)
+                log.info("FFmpeg hardware video decoding: %s", selected_hwaccel)
             else:
-                log.warning("GPU acceleration requested but no working hwaccel found; using CPU")
+                log.warning(
+                    "No compatible FFmpeg hardware decoder validated; "
+                    "video decoding uses CPU (GPU filters remain enabled when available)"
+                )
 
     buckets = generate_buckets(
         resolution=cfg.resolution,

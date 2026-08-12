@@ -67,6 +67,13 @@ v0?_test/
 smoke_out/
 test_*/
 
+# Design research artifacts (prototype workspace)
+.superpowers/
+
+# Tauri build artifacts
+src-tauri/target/
+src-tauri/bundle-resources/
+
 # Debug images
 debug_*.png
 check_*.jpg
