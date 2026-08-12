@@ -19,7 +19,7 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string): H
   return node;
 }
 
-function buildTopBar(): HTMLElement {
+function buildTopBar(store: Store, onRun: () => void): HTMLElement {
   const bar = el("header", "runbar");
   const id = el("div", "id");
   const name = el("span", "name");
@@ -61,16 +61,30 @@ function buildTopBar(): HTMLElement {
   });
   gpuWrap.append(gpuSwitch, gpuStatusText);
 
-  const lang = el("button", "btn");
-  lang.textContent = "中文 / EN";
-  const cancel = el("button", "btn danger");
-  cancel.textContent = "CANCEL";
-  const run = el("button", "btn fill");
-  run.textContent = "EXTRACT";
+  const lang = renderButton({ label: "中文 / EN", variant: "ghost", onClick: () => onLangToggle() });
+  const cancel = renderButton({
+    label: "CANCEL",
+    variant: "danger",
+    disabled: true,
+    onClick: () => {
+      const btn = document.querySelector<HTMLButtonElement>("[data-cancel]");
+      if (btn && !btn.disabled) btn.click();
+    },
+  });
+  const run = renderButton({
+    label: "EXTRACT",
+    variant: "fill",
+    onClick: onRun,
+  });
   actions.append(gpuWrap, lang, cancel, run);
 
   bar.append(id, el("div", "spacer"), actions);
   return bar;
+
+  function onLangToggle(): void {
+    store.setLang(store.lang === "zh" ? "en" : "zh");
+    import("./i18n").then(({ setLang }) => setLang(store.lang));
+  }
 }
 
 function buildRail(onNav: (key: string) => void, onAbout: () => void): HTMLElement {
@@ -175,9 +189,14 @@ export function renderApp(root: HTMLElement): void {
     Object.entries(viewByKey).forEach(([k, v]) => v.classList.toggle("active", k === key));
   };
 
+  const runFromTop = (): void => {
+    switchView("execute");
+    document.querySelector('[data-run]')?.dispatchEvent(new MouseEvent("click"));
+  };
+
   const rail = buildRail((key: string) => switchView(key), () => showModal(aboutModal, true));
   work.append(rail, viewport, renderInspector({}));
-  app.append(buildTopBar(), work);
+  app.append(buildTopBar(store, runFromTop), work);
 
   root.style.width = `${SHELL.designW}px`;
   root.style.height = `${SHELL.designH}px`;

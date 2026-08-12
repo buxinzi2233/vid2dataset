@@ -2,12 +2,7 @@
 
 import { renderConsole, appendLogLine } from "../components/Console";
 import { renderButton } from "../components/Button";
-import {
-  asCommandError,
-  cancelRun,
-  openFolder,
-  startRun,
-} from "../api/ipc";
+import { asCommandError, openFolder } from "../api/ipc";
 import {
   onExtractDone,
   onExtractError,
@@ -24,9 +19,11 @@ export function renderExecuteView(store: Store): HTMLElement {
 
   const strip = el("div", "run-strip");
   const runBtn = renderButton({ label: t("extract_big"), variant: "fill" });
+  runBtn.dataset.run = "true";
   const side = el("div", "btn-side");
   const advBtn = renderButton({ label: t("advanced"), variant: "orange" });
   const cancelBtn = renderButton({ label: t("cancel"), variant: "danger", disabled: true });
+  cancelBtn.dataset.cancel = "true";
   side.append(advBtn, cancelBtn);
   strip.append(runBtn, side);
 
@@ -66,14 +63,6 @@ export function renderExecuteView(store: Store): HTMLElement {
     scan.classList.toggle("busy", busy);
   }
 
-  function buildConfig(): Record<string, unknown> {
-    return {
-      input: store.inputPath || "output",
-      output: store.outputPath || "output",
-      ...store.config,
-    };
-  }
-
   function wireEvents(): void {
     void onExtractProgress((e) => {
       if (e.stage === "video") {
@@ -110,7 +99,7 @@ export function renderExecuteView(store: Store): HTMLElement {
     status.className = "status";
     setBusy(true);
     try {
-      await startRun(buildConfig() as never);
+      await store.start();
     } catch (e) {
       status.textContent = t("run_error", { msg: String(e) });
       status.className = "status err";
@@ -121,7 +110,7 @@ export function renderExecuteView(store: Store): HTMLElement {
   cancelBtn.addEventListener("click", async () => {
     status.textContent = t("cancelling");
     try {
-      await cancelRun();
+      await store.cancel();
     } catch (e) {
       status.textContent = String(e);
     }

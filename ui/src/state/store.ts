@@ -2,7 +2,7 @@
 //! Prefs live here (merged into the store) to avoid a one-function module.
 
 import type { ExtractConfig } from "../api/types";
-import { listPresets, loadPreset } from "../api/ipc";
+import { cancelRun, listPresets, loadPreset, startRun } from "../api/ipc";
 import { RunState } from "./runState";
 
 export interface PresetInfo {
@@ -64,5 +64,23 @@ export class Store {
 
   selectParam(key: string | null): void {
     this.selectedParam = key;
+  }
+
+  buildConfig(): Partial<ExtractConfig> & { input: string; output: string } {
+    return {
+      input: this.inputPath || "output",
+      output: this.outputPath || "output",
+      ...this.config,
+    };
+  }
+
+  async start(): Promise<void> {
+    this.run.setStatus("running");
+    await startRun(this.buildConfig() as ExtractConfig);
+  }
+
+  async cancel(): Promise<void> {
+    this.run.setStatus("cancelling");
+    await cancelRun();
   }
 }
