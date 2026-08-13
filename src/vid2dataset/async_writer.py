@@ -29,6 +29,7 @@ def _encode_and_write(
     fmt: str,
     jpg_quality: int,
     webp_quality: int,
+    png_compression: int,
 ) -> None:
     """Encode + write. Used by the worker thread."""
     fmt = fmt.lower()
@@ -39,7 +40,7 @@ def _encode_and_write(
     elif fmt == "webp":
         params = [cv2.IMWRITE_WEBP_QUALITY, int(webp_quality)]
     elif fmt == "png":
-        params = [cv2.IMWRITE_PNG_COMPRESSION, 4]
+        params = [cv2.IMWRITE_PNG_COMPRESSION, int(png_compression)]
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     ok, buf = cv2.imencode(ext, image_bgr, params)
@@ -63,12 +64,14 @@ class AsyncWriter:
         # all writes complete by exit
     """
 
-    def __init__(self, workers: int = 2) -> None:
+    def __init__(self, workers: int = 2, max_pending: int | None = None) -> None:
+        worker_count = max(1, workers)
         self._pool = ThreadPoolExecutor(
-            max_workers=max(1, workers), thread_name_prefix="vid2dataset-writer"
+            max_workers=worker_count, thread_name_prefix="vid2dataset-writer"
         )
         self._futures: list[Future] = []
         self._lock = threading.Lock()
+        self._max_pending = max(worker_count, max_pending or worker_count * 2)
 
     def submit(
         self,
@@ -78,14 +81,29 @@ class AsyncWriter:
         fmt: str = "png",
         jpg_quality: int = 95,
         webp_quality: int = 95,
+        png_compression: int = 4,
     ) -> None:
         # Take a copy of the buffer because the caller may reuse/free the source.
         img = image_bgr.copy()
         f = self._pool.submit(
-            _encode_and_write, img, out_path, fmt, jpg_quality, webp_quality
+            _encode_and_write,
+            img,
+            out_path,
+            fmt,
+            jpg_quality,
+            webp_quality,
+            png_compression,
         )
+        oldest: Future | None = None
         with self._lock:
             self._futures.append(f)
+            if len(self._futures) > self._max_pending:
+                oldest = self._futures.pop(0)
+        if oldest is not None:
+            try:
+                oldest.result()
+            except Exception as e:
+                log.warning("Writer task failed: %s", e)
 
     def flush(self) -> None:
         """Wait for all submitted writes to complete."""

@@ -144,7 +144,10 @@ def _pipeline_summary(result: object) -> dict:
                 "rejected_ssim": stats.rejected_ssim,
                 "rejected_color": stats.rejected_color,
                 "rejected_completeness": stats.rejected_completeness,
+                "rejected_content": stats.rejected_content,
+                "rejected_temporal": stats.rejected_temporal,
                 "auto_blur_threshold": stats.auto_blur_threshold,
+                "frames_scanned": stats.frames_scanned,
                 "elapsed_s": round(stats.elapsed_s, 2),
                 "watermarks": stats.watermarks,
             }

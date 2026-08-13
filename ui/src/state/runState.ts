@@ -85,6 +85,8 @@ const REJECTION_KEYS: (keyof VideoStatsSummary)[] = [
   "rejected_ssim",
   "rejected_color",
   "rejected_completeness",
+  "rejected_content",
+  "rejected_temporal",
 ];
 
 export function rejectedCount(video: VideoStatsSummary): number {

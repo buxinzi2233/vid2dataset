@@ -1,0 +1,54 @@
+# Native-resolution lossless extraction with strong content deduplication.
+description = "Native lossless PNG — full-frame coverage, absolute quality floor, and content-aware diversity."
+
+# Stage one decodes every source frame on the GPU. FFmpeg emits a CUDA-scaled
+# proxy at most every 0.25 seconds and immediately on scene changes, so short
+# shots between interval samples are still considered. Stage two decodes only
+# the winners at the source video's exact dimensions.
+output_mode = "native"
+output_format = "png"
+png_compression = 1
+decode_mode = "accurate"
+gpu_accel = true
+
+# Full-frame content scan and proxy quality analysis. An absolute blur floor is
+# used instead of a relative percentile, so a unique usable section cannot be
+# discarded merely because another part of the video is sharper.
+dedup_proxy_edge = 768
+native_scan_interval_seconds = 0.25
+native_scene_threshold = 0.08
+auto_quality = false
+blur_threshold = 50.0
+min_brightness = 15.0
+max_brightness = 245.0
+min_contrast = 10.0
+detect_letterbox = true
+subject_size_filter = false
+completeness_filter = false
+detect_watermark = false
+crop_watermark = false
+
+# Three-stage per-video dedup: pHash recall, spatial feature similarity, then
+# SSIM confirmation. Per-video scope preserves each source video's coverage.
+dedup = true
+dedup_mode = "strong"
+dedup_phash_distance = 4
+dedup_feature_threshold = 0.985
+# Whole-video diversity stage. Similar compositions compete regardless of
+# timestamp; 0.35 is intentionally much stronger than near-duplicate matching.
+dedup_content_threshold = 0.35
+dedup_strong_ssim_threshold = 0.94
+dedup_min_seconds = 0.0
+dedup_temporal_feature_threshold = 0.20
+dedup_scope = "video"
+dedup_keep = "sharpest"
+
+# Strong dedup replaces the legacy streaming diversity filters in native mode.
+ssim_filter = false
+color_diversity = false
+
+min_per_video = 0
+workers = 0
+skip_existing = true
+contact_sheet = true
+html_gallery = true

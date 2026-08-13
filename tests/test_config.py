@@ -17,6 +17,75 @@ def test_defaults_match_anima(tmp_path: Path) -> None:
     assert cfg.bucket_step == 64
     assert cfg.min_bucket == 512
     assert cfg.max_bucket == 2048
+    assert cfg.output_mode == "bucket"
+    assert cfg.dedup_mode == "standard"
+
+
+def test_native_strong_config(tmp_path: Path) -> None:
+    cfg = ExtractConfig(
+        input=tmp_path,
+        output_mode="native",
+        output_format="png",
+        png_compression=1,
+        dedup_mode="strong",
+        dedup_scope="global",
+        dedup_keep="sharpest",
+    )
+    assert cfg.output_mode == "native"
+    assert cfg.png_compression == 1
+    assert cfg.dedup_feature_threshold == 0.985
+    assert cfg.dedup_content_threshold == 0.0
+    assert cfg.native_scan_interval_seconds == 0.25
+    assert cfg.native_scene_threshold == 0.08
+    assert cfg.dedup_min_seconds == 0.0
+    assert cfg.dedup_temporal_feature_threshold == 1.0
+    assert cfg.auto_quality_window_seconds == 0.0
+
+
+def test_temporal_dedup_spacing_is_bounded(tmp_path: Path) -> None:
+    cfg = ExtractConfig(input=tmp_path, dedup_min_seconds=2.0)
+    assert cfg.dedup_min_seconds == 2.0
+
+    with pytest.raises(ValueError):
+        ExtractConfig(input=tmp_path, dedup_min_seconds=-0.1)
+
+
+def test_coverage_quality_windows_are_bounded(tmp_path: Path) -> None:
+    cfg = ExtractConfig(
+        input=tmp_path,
+        auto_quality_window_seconds=20.0,
+    )
+    assert cfg.auto_quality_window_seconds == 20.0
+
+    with pytest.raises(ValueError):
+        ExtractConfig(input=tmp_path, dedup_temporal_feature_threshold=1.1)
+
+
+def test_native_full_frame_scan_controls_are_bounded(tmp_path: Path) -> None:
+    cfg = ExtractConfig(
+        input=tmp_path,
+        native_scan_interval_seconds=0.1,
+        native_scene_threshold=0.04,
+    )
+    assert cfg.native_scan_interval_seconds == 0.1
+    assert cfg.native_scene_threshold == 0.04
+
+    with pytest.raises(ValueError):
+        ExtractConfig(input=tmp_path, native_scan_interval_seconds=0.0)
+    with pytest.raises(ValueError):
+        ExtractConfig(input=tmp_path, native_scene_threshold=1.1)
+    with pytest.raises(ValueError):
+        ExtractConfig(input=tmp_path, dedup_content_threshold=1.1)
+
+
+def test_native_mode_rejects_lossy_output(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="requires lossless PNG"):
+        ExtractConfig(input=tmp_path, output_mode="native", output_format="jpg")
+
+
+def test_strong_dedup_requires_native_mode(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="requires native"):
+        ExtractConfig(input=tmp_path, dedup_mode="strong")
 
 
 def test_resolution_must_be_aligned(tmp_path: Path) -> None:

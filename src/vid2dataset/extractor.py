@@ -54,7 +54,13 @@ from vid2dataset.io_utils import (
     read_frames_at,
     sanitize_stem,
 )
-from vid2dataset.keyframe_decoder import auto_select_hwaccel, extract_keyframes, has_ffmpeg
+from vid2dataset.keyframe_decoder import (
+    auto_select_hwaccel,
+    extract_content_frames,
+    extract_keyframes,
+    extract_selected_frames,
+    has_ffmpeg,
+)
 from vid2dataset.quality import evaluate_frame
 from vid2dataset.report import generate_report
 from vid2dataset.resize import (
@@ -66,6 +72,12 @@ from vid2dataset.resize import (
     select_bucket,
 )
 from vid2dataset.scene import detect_scenes, sample_indices_for_scene
+from vid2dataset.strong_dedup import (
+    StrongDedupCandidate,
+    make_candidate,
+    select_content_diverse,
+    strong_deduplicate,
+)
 from vid2dataset.watermark import WatermarkRegion, detect_watermarks, expand_crop_for_watermarks
 
 log = logging.getLogger(__name__)
@@ -101,7 +113,10 @@ class VideoStats:
     rejected_ssim: int = 0
     rejected_color: int = 0
     rejected_completeness: int = 0
+    rejected_content: int = 0
+    rejected_temporal: int = 0
     auto_blur_threshold: float | None = None
+    frames_scanned: int = 0
     elapsed_s: float = 0.0
     watermarks: list[dict] = field(default_factory=list)
     records: list[FrameRecord] = field(default_factory=list)
@@ -138,7 +153,10 @@ class PipelineResult:
                     "rejected_ssim": v.rejected_ssim,
                     "rejected_color": v.rejected_color,
                     "rejected_completeness": v.rejected_completeness,
+                    "rejected_content": v.rejected_content,
+                    "rejected_temporal": v.rejected_temporal,
                     "auto_blur_threshold": v.auto_blur_threshold,
+                    "frames_scanned": v.frames_scanned,
                     "elapsed_s": round(v.elapsed_s, 2),
                 }
                 for v in self.videos
@@ -147,6 +165,16 @@ class PipelineResult:
 
 
 ProgressCallback = Callable[[str, int, int], None]
+
+
+@dataclass(frozen=True)
+class _NativeFrameCandidate:
+    video: Path
+    frame_pts: int
+    timestamp: float
+    frame_index: int
+    quality: float
+    fingerprint: StrongDedupCandidate
 
 
 # ── Internals ─────────────────────────────────────────────────────────
@@ -200,30 +228,36 @@ def process_single_frame(
     """
     from vid2dataset.io_utils import write_image
 
-    buckets = generate_buckets(
-        resolution=cfg.resolution,
-        min_bucket=cfg.min_bucket,
-        max_bucket=cfg.max_bucket,
-        step=cfg.bucket_step,
-    )
-    if not buckets or frame_bgr is None or frame_bgr.size == 0:
+    if frame_bgr is None or frame_bgr.size == 0:
         return None
 
-    if cfg.detect_letterbox:
-        rect = detect_letterbox(
-            frame_bgr,
-            threshold=cfg.letterbox_threshold,
-            min_ratio=cfg.letterbox_min_ratio,
+    if cfg.output_mode == "native":
+        out_img = frame_bgr
+    else:
+        buckets = generate_buckets(
+            resolution=cfg.resolution,
+            min_bucket=cfg.min_bucket,
+            max_bucket=cfg.max_bucket,
+            step=cfg.bucket_step,
         )
-        if rect is not None:
-            frame_bgr = frame_bgr[rect.y : rect.y + rect.h, rect.x : rect.x + rect.w]
-    if frame_bgr.size == 0:
-        return None
+        if not buckets:
+            return None
 
-    resized = _resize_to_bucket(frame_bgr, cfg, buckets)
-    if resized is None:
-        return None
-    out_img, _bucket = resized
+        if cfg.detect_letterbox:
+            rect = detect_letterbox(
+                frame_bgr,
+                threshold=cfg.letterbox_threshold,
+                min_ratio=cfg.letterbox_min_ratio,
+            )
+            if rect is not None:
+                frame_bgr = frame_bgr[rect.y : rect.y + rect.h, rect.x : rect.x + rect.w]
+        if frame_bgr.size == 0:
+            return None
+
+        resized = _resize_to_bucket(frame_bgr, cfg, buckets)
+        if resized is None:
+            return None
+        out_img, _bucket = resized
 
     out_dir = _output_dir_for(cfg, video)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -235,6 +269,7 @@ def process_single_frame(
         fmt=cfg.output_format,
         jpg_quality=cfg.jpg_quality,
         webp_quality=cfg.webp_quality,
+        png_compression=cfg.png_compression,
     )
     return out_path
 
@@ -549,6 +584,7 @@ def _process_video(
             fmt=cfg.output_format,
             jpg_quality=cfg.jpg_quality,
             webp_quality=cfg.webp_quality,
+            png_compression=cfg.png_compression,
         )
         if ssim_filter is not None:
             ssim_filter.accept(out_img)
@@ -600,6 +636,7 @@ def _process_video(
                 fmt=cfg.output_format,
                 jpg_quality=cfg.jpg_quality,
                 webp_quality=cfg.webp_quality,
+                png_compression=cfg.png_compression,
             )
             if cfg.dedup and dedup_index is not None:
                 bh = hash_image(b_img, hash_size=cfg.phash_size)
@@ -649,6 +686,479 @@ def _process_video(
     return stats
 
 
+def _collect_native_candidates(
+    video: Path,
+    *,
+    cfg: ExtractConfig,
+    progress: ProgressCallback | None,
+    cancel_event: threading.Event | None,
+    hwaccel: str | None,
+) -> tuple[VideoStats, list[_NativeFrameCandidate]]:
+    """Stage one: scan every frame, then fingerprint content candidates."""
+    t0 = time.perf_counter()
+    meta = probe_video(video)
+    out_dir = _output_dir_for(cfg, video)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stats = VideoStats(
+        video=str(video),
+        duration_s=meta.duration_s,
+        fps=meta.fps,
+        width=meta.width,
+        height=meta.height,
+        scenes=0,
+        candidates=0,
+        written=0,
+    )
+    provisional: list[_NativeFrameCandidate] = []
+    log.info(
+        "Native stage 1: %s (%dx%d, %d frames, proxy=%dpx)",
+        video.name,
+        meta.width,
+        meta.height,
+        meta.frame_count,
+        cfg.dedup_proxy_edge,
+    )
+    segments = _segments_for(cfg, video)
+    last_timestamp = 0.0
+    for frame_pts, timestamp, proxy in extract_content_frames(
+        video,
+        interval_seconds=cfg.native_scan_interval_seconds,
+        scene_threshold=cfg.native_scene_threshold,
+        downscale_long_edge=cfg.dedup_proxy_edge,
+        hwaccel=hwaccel,
+    ):
+        last_timestamp = timestamp
+        if cancel_event is not None and cancel_event.is_set():
+            break
+        if segments and not _in_segments(timestamp, segments):
+            continue
+        stats.candidates += 1
+        if progress and stats.candidates % 8 == 0:
+            progress(
+                "proxy",
+                min(round(timestamp * (meta.fps or 0.0)), meta.frame_count),
+                meta.frame_count,
+            )
+
+        analysis_frame = proxy
+        if cfg.detect_letterbox:
+            rect = detect_letterbox(
+                proxy,
+                threshold=cfg.letterbox_threshold,
+                min_ratio=cfg.letterbox_min_ratio,
+            )
+            if rect is not None:
+                analysis_frame = proxy[rect.y : rect.y + rect.h, rect.x : rect.x + rect.w]
+        if analysis_frame.size == 0:
+            stats.rejected_too_small += 1
+            continue
+
+        quality = evaluate_frame(
+            analysis_frame,
+            blur_threshold=0.0,
+            min_brightness=cfg.min_brightness,
+            max_brightness=cfg.max_brightness,
+            min_contrast=cfg.min_contrast,
+        )
+        if not quality.passed:
+            stats.rejected_luma += 1
+            continue
+        if cfg.completeness_filter and not is_subject_complete(
+            analysis_frame,
+            min_score=cfg.completeness_threshold,
+        ):
+            stats.rejected_completeness += 1
+            continue
+        if cfg.subject_size_filter and not is_subject_large_enough(
+            analysis_frame,
+            min_ratio=cfg.subject_min_ratio,
+        ):
+            stats.rejected_completeness += 1
+            continue
+
+        provisional.append(
+            _NativeFrameCandidate(
+                video=video,
+                frame_pts=frame_pts,
+                timestamp=timestamp,
+                frame_index=round(timestamp * (meta.fps or 30.0)),
+                quality=quality.blur_score,
+                fingerprint=make_candidate(
+                    analysis_frame,
+                    quality=quality.blur_score,
+                    group=str(video),
+                ),
+            )
+        )
+
+    if cfg.auto_quality and provisional:
+        accepted_indices, thresholds = _adaptive_quality_indices(
+            [
+                (index, candidate.timestamp, candidate.quality)
+                for index, candidate in enumerate(provisional)
+            ],
+            blur_floor=cfg.blur_threshold,
+            keep_percentile=cfg.auto_quality_percentile,
+            window_seconds=cfg.auto_quality_window_seconds,
+        )
+        accepted = [
+            candidate
+            for index, candidate in enumerate(provisional)
+            if index in accepted_indices
+        ]
+        stats.auto_blur_threshold = float(np.mean(thresholds))
+        log.info(
+            "Native auto-quality for %s: %d proxy frames -> %d retained "
+            "(windows=%d, threshold %.2f..%.2f)",
+            video.name,
+            len(provisional),
+            len(accepted),
+            len(thresholds),
+            min(thresholds),
+            max(thresholds),
+        )
+    else:
+        accepted = [
+            candidate
+            for candidate in provisional
+            if candidate.quality >= cfg.blur_threshold
+        ]
+    stats.rejected_blur += len(provisional) - len(accepted)
+    cancelled = cancel_event is not None and cancel_event.is_set()
+    stats.frames_scanned = (
+        min(round(last_timestamp * (meta.fps or 0.0)), meta.frame_count)
+        if cancelled
+        else meta.frame_count
+    )
+    if progress and not cancelled:
+        progress("proxy", meta.frame_count, meta.frame_count)
+    log.info(
+        "Native full-frame scan for %s: %d/%d source frames -> %d content candidates",
+        video.name,
+        stats.frames_scanned,
+        meta.frame_count,
+        stats.candidates,
+    )
+    stats.elapsed_s = time.perf_counter() - t0
+    return stats, accepted
+
+
+def _write_native_winners(
+    *,
+    cfg: ExtractConfig,
+    candidates: list[_NativeFrameCandidate],
+    keep_indices: list[int],
+    stats_by_video: dict[Path, VideoStats],
+    hwaccel: str | None,
+    progress: ProgressCallback | None,
+    cancel_event: threading.Event | None,
+) -> None:
+    """Stage two: decode only winners and write source-resolution images."""
+    winners = [candidates[index] for index in keep_indices]
+    by_video: dict[Path, list[_NativeFrameCandidate]] = {}
+    for candidate in winners:
+        by_video.setdefault(candidate.video, []).append(candidate)
+
+    total = len(winners)
+    written = 0
+    writer = AsyncWriter(workers=max(2, min(8, (cfg.workers or 4))))
+    try:
+        for video, video_winners in by_video.items():
+            if cancel_event is not None and cancel_event.is_set():
+                break
+            ordered = sorted(video_winners, key=lambda candidate: candidate.timestamp)
+            candidate_by_pts = {
+                candidate.frame_pts: candidate for candidate in ordered
+            }
+            stats = stats_by_video[video]
+            out_dir = _output_dir_for(cfg, video)
+            log.info(
+                "Native stage 2: decoding %d winners from %s at %dx%d",
+                len(ordered),
+                video.name,
+                stats.width,
+                stats.height,
+            )
+            for frame_pts, frame in extract_selected_frames(
+                video,
+                [candidate.frame_pts for candidate in ordered],
+                hwaccel=hwaccel,
+            ):
+                if cancel_event is not None and cancel_event.is_set():
+                    break
+                candidate = candidate_by_pts[frame_pts]
+                seq = stats.written + 1
+                stem = f"{sanitize_stem(video.stem)}_{seq:05d}"
+                out_path = out_dir / f"{stem}.{cfg.output_format}"
+                writer.submit(
+                    frame,
+                    out_path,
+                    fmt=cfg.output_format,
+                    jpg_quality=cfg.jpg_quality,
+                    webp_quality=cfg.webp_quality,
+                    png_compression=cfg.png_compression,
+                )
+                stats.records.append(
+                    FrameRecord(
+                        video=str(video),
+                        frame_index=candidate.frame_index,
+                        out_path=str(out_path),
+                        blur=candidate.quality,
+                        bucket=(stats.width, stats.height),
+                        pixels=stats.width * stats.height,
+                    )
+                )
+                stats.written += 1
+                written += 1
+                if progress:
+                    progress("native-write", written, total)
+    finally:
+        writer.close()
+
+
+def _adaptive_quality_indices(
+    entries: list[tuple[int, float, float]],
+    *,
+    blur_floor: float,
+    keep_percentile: float,
+    window_seconds: float,
+) -> tuple[set[int], list[float]]:
+    """Choose locally sharp candidates without sacrificing timeline coverage."""
+    if not entries:
+        return set(), []
+
+    groups: dict[int, list[tuple[int, float, float]]] = {}
+    for entry in entries:
+        group = int(entry[1] // window_seconds) if window_seconds > 0 else 0
+        groups.setdefault(group, []).append(entry)
+
+    accepted: set[int] = set()
+    thresholds: list[float] = []
+    for group_entries in groups.values():
+        scores = np.asarray([entry[2] for entry in group_entries])
+        threshold = max(
+            blur_floor,
+            float(np.percentile(scores, 100.0 - keep_percentile)),
+        )
+        thresholds.append(threshold)
+        accepted.update(entry[0] for entry in group_entries if entry[2] >= threshold)
+    return accepted, thresholds
+
+
+def _temporal_features_match(
+    left: tuple,
+    right: tuple,
+    *,
+    threshold: float,
+) -> bool:
+    if len(left) < 4 or len(right) < 4:
+        return True
+    left_fingerprint = left[3]
+    right_fingerprint = right[3]
+    similarity = float(np.dot(left_fingerprint.feature, right_fingerprint.feature))
+    return similarity >= threshold
+
+
+def _select_temporal_winners(
+    entries: list[tuple],
+    *,
+    min_seconds: float,
+    max_count: int | None,
+    feature_threshold: float = 1.0,
+) -> list[int]:
+    """Keep timeline coverage while suppressing only similar nearby content.
+
+    Entries are ``(candidate_index, timestamp, quality[, fingerprint])``.
+    Candidates only compete with visually similar retained frames inside the
+    temporal neighbourhood. If an explicit hard cap remains necessary, it is
+    distributed across the timeline.
+    """
+    if not entries:
+        return []
+
+    ranked = sorted(entries, key=lambda item: (-item[2], item[1], item[0]))
+    retained: list[tuple] = []
+    retained_times: list[float] = []
+    for entry in ranked:
+        timestamp = entry[1]
+        position = int(np.searchsorted(retained_times, timestamp))
+        nearby: list[tuple] = []
+        left = position - 1
+        while left >= 0 and timestamp - retained_times[left] < min_seconds:
+            nearby.append(retained[left])
+            left -= 1
+        right = position
+        while right < len(retained_times) and retained_times[right] - timestamp < min_seconds:
+            nearby.append(retained[right])
+            right += 1
+        if min_seconds <= 0 or not any(
+            _temporal_features_match(entry, other, threshold=feature_threshold)
+            for other in nearby
+        ):
+            retained_times.insert(position, timestamp)
+            retained.insert(position, entry)
+
+    if not max_count or len(retained) <= max_count:
+        return sorted(entry[0] for entry in retained)
+
+    start = retained[0][1]
+    end = retained[-1][1]
+    if end <= start:
+        return sorted(entry[0] for entry in ranked[:max_count])
+
+    bin_width = (end - start) / max_count
+    best_by_bin: dict[int, tuple[int, float, float]] = {}
+    for entry in retained:
+        bin_index = min(max_count - 1, int((entry[1] - start) / bin_width))
+        current = best_by_bin.get(bin_index)
+        if current is None or (entry[2], -entry[1]) > (current[2], -current[1]):
+            best_by_bin[bin_index] = entry
+
+    chosen = {entry[0] for entry in best_by_bin.values()}
+    for entry in sorted(retained, key=lambda item: (-item[2], item[1], item[0])):
+        if len(chosen) >= max_count:
+            break
+        chosen.add(entry[0])
+    return sorted(chosen)
+
+
+def _run_native_pipeline(
+    cfg: ExtractConfig,
+    videos: list[Path],
+    *,
+    progress: ProgressCallback | None,
+    cancel_event: threading.Event | None,
+    hwaccel: str | None,
+) -> tuple[list[VideoStats], float]:
+    """Run the native-resolution two-stage extraction path."""
+    if cfg.output_format != "png":
+        log.warning(
+            "Native mode output_format=%s is not lossless; use PNG for lossless output",
+            cfg.output_format,
+        )
+    todo = [
+        video
+        for video in videos
+        if not (cfg.skip_existing and _stats_path(cfg, video).exists())
+    ]
+    start = time.perf_counter()
+    stats_by_video: dict[Path, VideoStats] = {}
+    candidates: list[_NativeFrameCandidate] = []
+    if todo:
+        override = cfg.workers if cfg.workers and cfg.workers > 0 else None
+        workers, reason = auto_detect_workers(todo, user_override=override)
+        workers = min(workers, 4)
+        log.info("Native proxy workers: %d (%s)", workers, reason)
+    else:
+        workers = 1
+
+    def collect(video: Path):
+        return _collect_native_candidates(
+            video,
+            cfg=cfg,
+            progress=progress,
+            cancel_event=cancel_event,
+            hwaccel=hwaccel,
+        )
+
+    if workers <= 1 or len(todo) <= 1:
+        collected = [(video, collect(video)) for video in todo]
+    else:
+        collected = []
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(collect, video): video for video in todo}
+            for future in as_completed(futures):
+                collected.append((futures[future], future.result()))
+    for video, (stats, video_candidates) in collected:
+        stats_by_video[video] = stats
+        candidates.extend(video_candidates)
+
+    fingerprints = [candidate.fingerprint for candidate in candidates]
+    if cfg.dedup and cfg.dedup_mode == "strong":
+        if progress:
+            progress("strong-dedup", 0, len(candidates))
+        result = strong_deduplicate(
+            fingerprints,
+            phash_distance=cfg.dedup_phash_distance,
+            feature_threshold=cfg.dedup_feature_threshold,
+            ssim_threshold=cfg.dedup_strong_ssim_threshold,
+            scope=cfg.dedup_scope,
+            keep=cfg.dedup_keep,
+            use_gpu=cfg.gpu_accel,
+        )
+        keep_indices = result.keep_indices
+        for duplicate_index in result.duplicate_of:
+            stats_by_video[candidates[duplicate_index].video].rejected_dup += 1
+        log.info(
+            "Strong dedup retained %d/%d candidates (device=%s)",
+            len(keep_indices),
+            len(candidates),
+            result.device,
+        )
+        if progress:
+            progress("strong-dedup", len(candidates), len(candidates))
+    else:
+        keep_indices = list(range(len(candidates)))
+
+    selected: list[int] = []
+    grouped: dict[Path, list[int]] = {}
+    for index in keep_indices:
+        grouped.setdefault(candidates[index].video, []).append(index)
+    for video, indexes in grouped.items():
+        content_result = select_content_diverse(
+            [candidates[index].fingerprint for index in indexes],
+            threshold=cfg.dedup_content_threshold,
+            use_gpu=cfg.gpu_accel,
+        )
+        content_indexes = [indexes[index] for index in content_result.keep_indices]
+        stats_by_video[video].rejected_content += len(indexes) - len(content_indexes)
+        video_selected = _select_temporal_winners(
+            [
+                (
+                    index,
+                    candidates[index].timestamp,
+                    candidates[index].quality,
+                    candidates[index].fingerprint,
+                )
+                for index in content_indexes
+            ],
+            min_seconds=cfg.dedup_min_seconds,
+            max_count=cfg.max_per_video,
+            feature_threshold=cfg.dedup_temporal_feature_threshold,
+        )
+        rejected = len(content_indexes) - len(video_selected)
+        stats_by_video[video].rejected_temporal += rejected
+        selected.extend(video_selected)
+        if rejected:
+            log.info(
+                "Temporal diversity retained %d/%d candidates for %s "
+                "(minimum %.2fs, cap=%s)",
+                len(video_selected),
+                len(content_indexes),
+                video.name,
+                cfg.dedup_min_seconds,
+                cfg.max_per_video or "none",
+            )
+    keep_indices = sorted(selected)
+
+    _write_native_winners(
+        cfg=cfg,
+        candidates=candidates,
+        keep_indices=keep_indices,
+        stats_by_video=stats_by_video,
+        hwaccel=hwaccel,
+        progress=progress,
+        cancel_event=cancel_event,
+    )
+    for video, stats in stats_by_video.items():
+        stats.elapsed_s = time.perf_counter() - start
+        _stats_path(cfg, video).write_text(
+            json.dumps(asdict(stats), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    return list(stats_by_video.values()), time.perf_counter() - start
+
+
 # ── Public entry point ────────────────────────────────────────────────
 
 
@@ -692,105 +1202,119 @@ def run_pipeline(
                     "video decoding uses CPU (GPU filters remain enabled when available)"
                 )
 
-    buckets = generate_buckets(
-        resolution=cfg.resolution,
-        min_bucket=cfg.min_bucket,
-        max_bucket=cfg.max_bucket,
-        step=cfg.bucket_step,
-    )
-    if not buckets:
-        raise RuntimeError("No valid buckets — check resolution/min_bucket/max_bucket/step.")
-
-    dedup_index = (
-        DedupIndex.load_or_new(
-            cfg.dedup_index, hash_size=cfg.phash_size, distance=cfg.phash_distance
+    if cfg.output_mode == "native":
+        log.info(
+            "Native lossless pipeline enabled: full-frame scan <= %.3fs, "
+            "scene=%.3f, proxy=%d, dedup=%s/%s, PNG compression=%d",
+            cfg.native_scan_interval_seconds,
+            cfg.native_scene_threshold,
+            cfg.dedup_proxy_edge,
+            cfg.dedup_mode,
+            cfg.dedup_scope,
+            cfg.png_compression,
         )
-        if cfg.dedup
-        else None
-    )
-
-    t_start = time.perf_counter()
-    all_stats: list[VideoStats] = []
-    dedup_lock = threading.Lock() if dedup_index else None
-
-    # Filter out videos to skip up front
-    todo = []
-    for video in videos:
-        if cfg.skip_existing and _stats_path(cfg, video).exists():
-            log.info("Skip (already done): %s", video.name)
-            continue
-        todo.append(video)
-
-    completed = 0
-    if todo:
-        # cfg.workers=0 means auto, otherwise treat as user override
-        override = cfg.workers if cfg.workers and cfg.workers > 0 else None
-        n_workers, worker_reason = auto_detect_workers(todo, user_override=override)
-        log.info("Workers: %s", worker_reason)
+        all_stats, elapsed = _run_native_pipeline(
+            cfg,
+            videos,
+            progress=progress,
+            cancel_event=cancel_event,
+            hwaccel=selected_hwaccel,
+        )
     else:
-        n_workers = 1
+        buckets = generate_buckets(
+            resolution=cfg.resolution,
+            min_bucket=cfg.min_bucket,
+            max_bucket=cfg.max_bucket,
+            step=cfg.bucket_step,
+        )
+        if not buckets:
+            raise RuntimeError("No valid buckets — check resolution/min_bucket/max_bucket/step.")
 
-    def _process_one(video: Path, seq_off: int) -> VideoStats | None:
-        if cancel_event and cancel_event.is_set():
-            return None
-        try:
-            return _process_video(
-                video,
-                cfg=cfg,
-                buckets=buckets,
-                dedup_index=dedup_index,
-                dedup_lock=dedup_lock,
-                seq_offset=seq_off,
-                progress=progress,
-                cancel_event=cancel_event,
-                hwaccel=selected_hwaccel,
+        dedup_index = (
+            DedupIndex.load_or_new(
+                cfg.dedup_index, hash_size=cfg.phash_size, distance=cfg.phash_distance
             )
-        except (cv2.error, OSError, ValueError) as e:
-            log.error("Failed to process %s: %s", video.name, e)
-            return None
+            if cfg.dedup
+            else None
+        )
 
-    if n_workers <= 1 or len(todo) <= 1:
-        # Sequential path (preserves deterministic seq_offset)
-        seq_offset = 0
-        for vi, video in enumerate(todo):
-            if cancel_event and cancel_event.is_set():
-                log.info("Cancelled by user")
-                break
-            if progress:
-                progress("video", vi, len(todo))
-            vs = _process_one(video, seq_offset)
-            if vs is None:
+        t_start = time.perf_counter()
+        all_stats = []
+        dedup_lock = threading.Lock() if dedup_index else None
+
+        todo = []
+        for video in videos:
+            if cfg.skip_existing and _stats_path(cfg, video).exists():
+                log.info("Skip (already done): %s", video.name)
                 continue
-            all_stats.append(vs)
-            seq_offset += vs.written
-            if dedup_index and cfg.dedup_index:
-                with dedup_lock:
-                    dedup_index.save(cfg.dedup_index)
-    else:
-        # Parallel path: each worker uses video stem prefix so files don't collide
-        log.info("Parallel processing with %d workers", n_workers)
-        with ThreadPoolExecutor(max_workers=n_workers) as pool:
-            future_to_video = {
-                pool.submit(_process_one, video, vi * 100000): video
-                for vi, video in enumerate(todo)
-            }
-            for future in as_completed(future_to_video):
+            todo.append(video)
+
+        completed = 0
+        if todo:
+            override = cfg.workers if cfg.workers and cfg.workers > 0 else None
+            n_workers, worker_reason = auto_detect_workers(todo, user_override=override)
+            log.info("Workers: %s", worker_reason)
+        else:
+            n_workers = 1
+
+        def _process_one(video: Path, seq_off: int) -> VideoStats | None:
+            if cancel_event and cancel_event.is_set():
+                return None
+            try:
+                return _process_video(
+                    video,
+                    cfg=cfg,
+                    buckets=buckets,
+                    dedup_index=dedup_index,
+                    dedup_lock=dedup_lock,
+                    seq_offset=seq_off,
+                    progress=progress,
+                    cancel_event=cancel_event,
+                    hwaccel=selected_hwaccel,
+                )
+            except (cv2.error, OSError, ValueError) as e:
+                log.error("Failed to process %s: %s", video.name, e)
+                return None
+
+        if n_workers <= 1 or len(todo) <= 1:
+            seq_offset = 0
+            for vi, video in enumerate(todo):
                 if cancel_event and cancel_event.is_set():
-                    pool.shutdown(wait=False, cancel_futures=True)
                     log.info("Cancelled by user")
                     break
-                vs = future.result()
-                completed += 1
                 if progress:
-                    progress("video", completed, len(todo))
+                    progress("video", vi, len(todo))
+                vs = _process_one(video, seq_offset)
                 if vs is None:
                     continue
                 all_stats.append(vs)
+                seq_offset += vs.written
                 if dedup_index and cfg.dedup_index:
                     with dedup_lock:
                         dedup_index.save(cfg.dedup_index)
-
-    elapsed = time.perf_counter() - t_start
+        else:
+            log.info("Parallel processing with %d workers", n_workers)
+            with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                future_to_video = {
+                    pool.submit(_process_one, video, vi * 100000): video
+                    for vi, video in enumerate(todo)
+                }
+                for future in as_completed(future_to_video):
+                    if cancel_event and cancel_event.is_set():
+                        pool.shutdown(wait=False, cancel_futures=True)
+                        log.info("Cancelled by user")
+                        break
+                    vs = future.result()
+                    completed += 1
+                    if progress:
+                        progress("video", completed, len(todo))
+                    if vs is None:
+                        continue
+                    all_stats.append(vs)
+                    if dedup_index and cfg.dedup_index:
+                        with dedup_lock:
+                            dedup_index.save(cfg.dedup_index)
+        elapsed = time.perf_counter() - t_start
 
     all_image_paths = [Path(r.out_path) for vs in all_stats for r in vs.records]
 
@@ -901,6 +1425,9 @@ def run_pipeline(
                     "rejected_ssim": v.rejected_ssim,
                     "rejected_color": v.rejected_color,
                     "rejected_dup": v.rejected_dup,
+                    "rejected_content": v.rejected_content,
+                    "rejected_temporal": v.rejected_temporal,
+                    "frames_scanned": v.frames_scanned,
                     "elapsed_s": v.elapsed_s,
                     "watermarks": v.watermarks,
                     "records": [{"blur": r.blur, "bucket": list(r.bucket)} for r in v.records],

@@ -162,6 +162,7 @@ def write_image(
     fmt: str = "png",
     jpg_quality: int = 95,
     webp_quality: int = 95,
+    png_compression: int = 4,
 ) -> None:
     """Write ``image_bgr`` to ``out_path`` in the requested format.
 
@@ -176,7 +177,7 @@ def write_image(
     elif fmt == "webp":
         params = [cv2.IMWRITE_WEBP_QUALITY, int(webp_quality)]
     elif fmt == "png":
-        params = [cv2.IMWRITE_PNG_COMPRESSION, 4]
+        params = [cv2.IMWRITE_PNG_COMPRESSION, int(png_compression)]
 
     ok, buf = cv2.imencode(ext, image_bgr, params)
     if not ok:

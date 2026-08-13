@@ -9,6 +9,10 @@ export interface ExtractConfig {
   flatten_output: boolean;
   /** Output image format. PNG is lossless; recommended for training. */
   output_format: string;
+  /** bucket = resize/crop to the configured training bucket; native = two-stage extraction that filters proxy frames first, then writes winning frames at the source video's original resolution. */
+  output_mode: string;
+  /** PNG compression level. Every level is lossless; lower values encode faster and create larger files. */
+  png_compression: number;
   jpg_quality: number;
   webp_quality: number;
   /** scene = one frame per detected scene; interval = every N seconds; hybrid = scene-based with an upper-bound interval cap. */
@@ -53,6 +57,30 @@ export interface ExtractConfig {
   phash_distance: number;
   /** Optional path to persist the global pHash index across runs. */
   dedup_index: string;
+  /** standard = streaming pHash/SSIM filters; strong = two-stage proxy clustering before native-resolution output. */
+  dedup_mode: string;
+  /** Long edge of proxy frames used by strong dedup. CUDA decoding uses scale_cuda when available so full-resolution frames stay on device. */
+  dedup_proxy_edge: number;
+  /** Maximum interval between proxy candidates during native full-frame scanning. Scene changes are emitted immediately between interval samples. */
+  native_scan_interval_seconds: number;
+  /** FFmpeg scene-change score used while every source frame is scanned. Lower values emit more short-shot candidates. */
+  native_scene_threshold: number;
+  /** pHash Hamming distance used as an exact/near-exact strong dedup signal. */
+  dedup_phash_distance: number;
+  /** Cosine-similarity threshold for strong perceptual fingerprints. Higher values preserve more composition variants. */
+  dedup_feature_threshold: number;
+  /** Whole-video spatial-feature similarity threshold for quality-first diversity selection. Similar compositions compete even when they occur far apart. 0 disables this additional stage. */
+  dedup_content_threshold: number;
+  /** SSIM threshold that confirms visually near-identical proxy frames during strong dedup. */
+  dedup_strong_ssim_threshold: number;
+  /** Temporal neighbourhood used to suppress visually similar frames from the same video. Distinct content inside the window survives. 0 disables temporal suppression. */
+  dedup_min_seconds: number;
+  /** Feature cosine threshold for near-time diversity suppression. Lower values reject more incremental motion; 1 disables similarity-based temporal suppression. */
+  dedup_temporal_feature_threshold: number;
+  /** video compares candidates only within one source video; global also removes duplicates across all videos in the run. */
+  dedup_scope: string;
+  /** Which frame wins a duplicate cluster: the first frame or the sharpest frame by proxy Laplacian score. */
+  dedup_keep: string;
   /** Enable SSIM-based diversity filter. Ensures accepted frames within a scene are visually distinct (different poses). */
   ssim_filter: boolean;
   /** Max SSIM between two frames to consider them 'different'. Lower = stricter diversity. 0.85 works well for MMD dance. */
@@ -75,6 +103,8 @@ export interface ExtractConfig {
   auto_quality: boolean;
   /** Keep the top N%% sharpest frames when auto_quality is on. */
   auto_quality_percentile: number;
+  /** Calibrate auto-quality independently in fixed timeline windows so a softer section is not rejected by sharper parts of the video. 0 uses one threshold for the whole video. */
+  auto_quality_window_seconds: number;
   /** If True, expand the bucket crop to remove peripheral watermarks detected by detect_watermark. Default False (warn-only). Center watermarks are never cropped (would slice the subject). */
   crop_watermark: boolean;
   /** Scan each video for static text/logo overlays (URLs, artist tags, recording-software HUDs). Findings are LOGGED and saved to the per-video stats; the pipeline does NOT crop or modify output bytes. Set False to skip the scan entirely. */

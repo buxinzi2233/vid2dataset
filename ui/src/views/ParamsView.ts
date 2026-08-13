@@ -5,7 +5,7 @@ import { renderSwitch } from "../components/Switch";
 import { renderSelectMenu } from "../components/SelectMenu";
 import { el } from "../components/el";
 import { t } from "../i18n";
-import { PARAMS, SWITCHES, parseParamValue } from "../state/paramMeta";
+import { SWITCHES, paramsForConfig, parseParamValue } from "../state/paramMeta";
 import type { Store } from "../state/store";
 import { validateConfig } from "../api/ipc";
 
@@ -87,32 +87,41 @@ export function renderParamsView(store: Store): ParamsView {
 
   const grid = el("div", "param-grid");
   const inputs = new Map<string, HTMLInputElement>();
-  for (const [index, meta] of PARAMS.entries()) {
-    const cell = el("div", "param-cell");
-    cell.dataset.param = meta.key;
-    cell.append(el("div", "pcode", `P.${String(index + 1).padStart(2, "0")}`));
-    const label = el("div", "plabel");
-    const info = el("button", "pinfo", "?");
-    info.type = "button";
-    info.title = meta.tip;
-    info.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const same = store.selectedParam === meta.key && store.inspectorOpen;
-      store.selectParam(meta.key);
-      store.setInspectorOpen(!same);
-    });
-    label.append(el("span", undefined, meta.label), info);
-    const input = el("input");
-    input.inputMode = "decimal";
-    input.addEventListener("focus", () => store.selectParam(meta.key, true));
-    input.addEventListener("input", () => {
-      store.setParam(meta.key, parseParamValue(input.value, meta) as string | number);
-      void runValidate();
-    });
-    cell.addEventListener("click", () => store.selectParam(meta.key, true));
-    cell.append(label, input);
-    grid.append(cell);
-    inputs.set(meta.key, input);
+  let paramSignature = "";
+  function rebuildParamGrid(): void {
+    const params = paramsForConfig(store.config as Record<string, unknown>);
+    const signature = params.map((meta) => meta.key).join("|");
+    if (signature === paramSignature) return;
+    paramSignature = signature;
+    inputs.clear();
+    grid.innerHTML = "";
+    for (const [index, meta] of params.entries()) {
+      const cell = el("div", "param-cell");
+      cell.dataset.param = meta.key;
+      cell.append(el("div", "pcode", `P.${String(index + 1).padStart(2, "0")}`));
+      const label = el("div", "plabel");
+      const info = el("button", "pinfo", "?");
+      info.type = "button";
+      info.title = meta.tip;
+      info.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const same = store.selectedParam === meta.key && store.inspectorOpen;
+        store.selectParam(meta.key);
+        store.setInspectorOpen(!same);
+      });
+      label.append(el("span", undefined, meta.label), info);
+      const input = el("input");
+      input.inputMode = "decimal";
+      input.addEventListener("focus", () => store.selectParam(meta.key, true));
+      input.addEventListener("input", () => {
+        store.setParam(meta.key, parseParamValue(input.value, meta) as string | number);
+        void runValidate();
+      });
+      cell.addEventListener("click", () => store.selectParam(meta.key, true));
+      cell.append(label, input);
+      grid.append(cell);
+      inputs.set(meta.key, input);
+    }
   }
 
   const switchGrid = el("div", "switch-grid");
@@ -129,6 +138,11 @@ export function renderParamsView(store: Store): ParamsView {
         store.selectParam(item.key, true);
         if (item.key === "gpu_accel") void store.setGpuEnabled(on);
         else if (item.key === "decode_mode") store.setParam("decode_mode", on ? "keyframe" : "accurate");
+        else if (item.key === "output_mode") {
+          store.setParam("output_mode", on ? "native" : "bucket");
+          if (on) store.setParam("output_format", "png");
+        }
+        else if (item.key === "dedup_mode") store.setParam("dedup_mode", on ? "strong" : "standard");
         else store.setParam(item.key, on);
         void runValidate();
       },
@@ -176,9 +190,10 @@ export function renderParamsView(store: Store): ParamsView {
   }
 
   function render(): void {
+    rebuildParamGrid();
     presetSelect.setValue(store.presetName);
     presetDesc.textContent = store.presetDescription();
-    for (const meta of PARAMS) {
+    for (const meta of paramsForConfig(store.config as Record<string, unknown>)) {
       const input = inputs.get(meta.key);
       if (input && document.activeElement !== input) {
         const raw = store.config[meta.key as keyof typeof store.config];
@@ -189,6 +204,10 @@ export function renderParamsView(store: Store): ParamsView {
     for (const item of SWITCHES) {
       const on = item.key === "decode_mode"
         ? store.config.decode_mode === "keyframe"
+        : item.key === "output_mode"
+          ? store.config.output_mode === "native"
+          : item.key === "dedup_mode"
+            ? store.config.dedup_mode === "strong"
         : Boolean(store.config[item.key as keyof typeof store.config]);
       const itemWrap = switchControls.get(item.key);
       itemWrap?.classList.toggle("selected", store.selectedParam === item.key);
@@ -209,7 +228,10 @@ export function renderParamsView(store: Store): ParamsView {
   }
 
   body.append(presetRow, grid, switchGrid, gpuStatus, validateStatus);
-  const tag = `BUCKET ${store.config.resolution ?? 1024} // STEP ${store.config.bucket_step ?? 64}`;
+  const panelTag = (): string => store.config.output_mode === "native"
+    ? `NATIVE SOURCE // PROXY ${store.config.dedup_proxy_edge ?? 768}`
+    : `BUCKET ${store.config.resolution ?? 1024} // STEP ${store.config.bucket_step ?? 64}`;
+  const tag = panelTag();
   const panel = renderPanel({ code: "02", title: t("parameters"), tag, body: [body] });
   inner.append(panel);
   root.append(inner, presetModal);
@@ -217,7 +239,7 @@ export function renderParamsView(store: Store): ParamsView {
   const unsubscribe = store.subscribe(() => {
     render();
     const headerTag = panel.querySelector<HTMLElement>(".ptag");
-    if (headerTag) headerTag.textContent = `BUCKET ${store.config.resolution ?? 1024} // STEP ${store.config.bucket_step ?? 64}`;
+    if (headerTag) headerTag.textContent = panelTag();
   });
   render();
   void runValidate();

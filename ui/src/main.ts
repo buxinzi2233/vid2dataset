@@ -5,6 +5,7 @@ const previewPresets = [
   { name: "anima-style", description: "Anima Style LoRA — broad sampling, style coverage. Recommended for MMD style sets." },
   { name: "anima-character", description: "Anima Character LoRA — strict quality, fewer frames, looser dedup." },
   { name: "fast-preview", description: "Fast preview — JPG, 768px, one frame per scene. ~10x faster than default." },
+  { name: "native-4k-strong", description: "Native lossless PNG — full-frame coverage, absolute quality floor, and content-aware diversity." },
 ];
 
 const previewConfigs: Record<string, Record<string, unknown>> = {
@@ -53,6 +54,33 @@ const previewConfigs: Record<string, Record<string, unknown>> = {
     detect_watermark: false,
     tagger_model: "wd-eva02-large-tagger-v3",
   },
+  "native-4k-strong": {
+    output_mode: "native",
+    output_format: "png",
+    png_compression: 1,
+    dedup_mode: "strong",
+    dedup_proxy_edge: 768,
+    native_scan_interval_seconds: 0.25,
+    native_scene_threshold: 0.08,
+    dedup_phash_distance: 4,
+    dedup_feature_threshold: 0.985,
+    dedup_content_threshold: 0.35,
+    dedup_strong_ssim_threshold: 0.94,
+    dedup_min_seconds: 0.0,
+    dedup_temporal_feature_threshold: 0.20,
+    dedup_scope: "video",
+    dedup_keep: "sharpest",
+    blur_threshold: 50,
+    max_per_video: null,
+    workers: 0,
+    bucket_step: 64,
+    auto_quality: false,
+    decode_mode: "accurate",
+    detect_watermark: false,
+    subject_size_filter: false,
+    gpu_accel: true,
+    tagger_model: "wd-eva02-large-tagger-v3",
+  },
 };
 
 async function enableBrowserPreview(): Promise<void> {
@@ -75,6 +103,23 @@ async function enableBrowserPreview(): Promise<void> {
     if (command === "get_lang") return "zh";
     if (command === "set_lang") return null;
     if (command === "tagger_status") return { available: false, size_mb: 1200 };
+    if (command === "gpu_detect") return {
+      vendor: "NVIDIA",
+      gpu_name: "Tesla V100-SXM2-16GB",
+      arch: "volta",
+      compute_cap: 7.0,
+      os_name: "linux",
+      os_arch: "x86_64",
+    };
+    if (command === "gpu_status") return {
+      available: true,
+      cached: false,
+      version: "source",
+      cache_dir: "/venv",
+      size_mb: 0,
+      cuda_tag: "cu126",
+      can_download: false,
+    };
     if (command === "check_update") return { available: false };
     if (command === "plugin:event|listen") return 1;
     if (command === "plugin:event|unlisten") return null;

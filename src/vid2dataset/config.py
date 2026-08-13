@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -35,6 +35,10 @@ ResizeMode = Literal["cover", "contain", "longest"]
 SamplingMode = Literal["scene", "interval", "hybrid"]
 ImageFormat = Literal["png", "jpg", "webp"]
 DecodeMode = Literal["accurate", "keyframe"]
+OutputMode = Literal["bucket", "native"]
+DedupMode = Literal["standard", "strong"]
+DedupScope = Literal["video", "global"]
+DedupKeep = Literal["first", "sharpest"]
 
 
 class ExtractConfig(BaseModel):
@@ -61,6 +65,19 @@ class ExtractConfig(BaseModel):
     output_format: ImageFormat = Field(
         "png",
         description="Output image format. PNG is lossless; recommended for training.",
+    )
+    output_mode: OutputMode = Field(
+        "bucket",
+        description="bucket = resize/crop to the configured training bucket; "
+        "native = two-stage extraction that filters proxy frames first, then "
+        "writes winning frames at the source video's original resolution.",
+    )
+    png_compression: int = Field(
+        4,
+        ge=0,
+        le=9,
+        description="PNG compression level. Every level is lossless; lower values "
+        "encode faster and create larger files.",
     )
     jpg_quality: int = Field(95, ge=50, le=100)
     webp_quality: int = Field(95, ge=50, le=100)
@@ -182,6 +199,88 @@ class ExtractConfig(BaseModel):
         None,
         description="Optional path to persist the global pHash index across runs.",
     )
+    dedup_mode: DedupMode = Field(
+        "standard",
+        description="standard = streaming pHash/SSIM filters; strong = two-stage "
+        "proxy clustering before native-resolution output.",
+    )
+    dedup_proxy_edge: int = Field(
+        768,
+        ge=256,
+        le=1536,
+        description="Long edge of proxy frames used by strong dedup. CUDA decoding "
+        "uses scale_cuda when available so full-resolution frames stay on device.",
+    )
+    native_scan_interval_seconds: float = Field(
+        0.25,
+        ge=0.05,
+        le=10.0,
+        description="Maximum interval between proxy candidates during native "
+        "full-frame scanning. Scene changes are emitted immediately between "
+        "interval samples.",
+    )
+    native_scene_threshold: float = Field(
+        0.08,
+        ge=0.0,
+        le=1.0,
+        description="FFmpeg scene-change score used while every source frame is "
+        "scanned. Lower values emit more short-shot candidates.",
+    )
+    dedup_phash_distance: int = Field(
+        4,
+        ge=0,
+        le=64,
+        description="pHash Hamming distance used as an exact/near-exact strong "
+        "dedup signal.",
+    )
+    dedup_feature_threshold: float = Field(
+        0.985,
+        ge=0.80,
+        le=1.0,
+        description="Cosine-similarity threshold for strong perceptual fingerprints. "
+        "Higher values preserve more composition variants.",
+    )
+    dedup_content_threshold: float = Field(
+        0.0,
+        ge=0.0,
+        le=1.0,
+        description="Whole-video spatial-feature similarity threshold for "
+        "quality-first diversity selection. Similar compositions compete even "
+        "when they occur far apart. 0 disables this additional stage.",
+    )
+    dedup_strong_ssim_threshold: float = Field(
+        0.94,
+        ge=0.0,
+        le=1.0,
+        description="SSIM threshold that confirms visually near-identical proxy "
+        "frames during strong dedup.",
+    )
+    dedup_min_seconds: float = Field(
+        0.0,
+        ge=0.0,
+        le=60.0,
+        description="Temporal neighbourhood used to suppress visually similar "
+        "frames from the same video. Distinct content inside the window survives. "
+        "0 disables temporal suppression.",
+    )
+    dedup_temporal_feature_threshold: float = Field(
+        1.0,
+        ge=0.0,
+        le=1.0,
+        description="Feature cosine threshold for near-time diversity suppression. "
+        "Lower values reject more incremental motion; 1 disables similarity-based "
+        "temporal suppression.",
+    )
+    dedup_scope: DedupScope = Field(
+        "global",
+        description="video compares candidates only within one source video; global "
+        "also removes duplicates across all videos in the run.",
+    )
+    dedup_keep: DedupKeep = Field(
+        "sharpest",
+        description="Which frame wins a duplicate cluster: the first frame or the "
+        "sharpest frame by proxy Laplacian score.",
+    )
 
     # ── Diversity filters ────────────────────────────────────────────
     ssim_filter: bool = Field(
@@ -249,6 +348,14 @@ class ExtractConfig(BaseModel):
         ge=10.0,
         le=95.0,
         description="Keep the top N%% sharpest frames when auto_quality is on.",
+    )
+    auto_quality_window_seconds: float = Field(
+        0.0,
+        ge=0.0,
+        le=300.0,
+        description="Calibrate auto-quality independently in fixed timeline windows "
+        "so a softer section is not rejected by sharper parts of the video. "
+        "0 uses one threshold for the whole video.",
     )
 
     # ── Decode mode ──────────────────────────────────────────────────
@@ -402,6 +509,14 @@ class ExtractConfig(BaseModel):
         if v is None or isinstance(v, Path):
             return v
         return Path(str(v)).expanduser()
+
+    @model_validator(mode="after")
+    def _validate_native_pipeline(self) -> ExtractConfig:
+        if self.output_mode == "native" and self.output_format != "png":
+            raise ValueError("native output_mode requires lossless PNG output_format")
+        if self.dedup_mode == "strong" and self.output_mode != "native":
+            raise ValueError("strong dedup_mode requires native output_mode")
+        return self
 
     # ── Loading helpers ──────────────────────────────────────────────
     @classmethod

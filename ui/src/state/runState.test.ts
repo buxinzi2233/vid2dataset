@@ -26,7 +26,10 @@ const RESULT: ExtractDone = {
     rejected_ssim: 2,
     rejected_color: 1,
     rejected_completeness: 0,
+    rejected_content: 2,
+    rejected_temporal: 4,
     auto_blur_threshold: 48,
+    frames_scanned: 60,
     elapsed_s: 4.1,
     watermarks: [{ side: "right" }, { side: "left" }],
   }],
@@ -46,7 +49,7 @@ describe("RunState", () => {
   });
 
   it("aggregates every rejection reason and watermark", () => {
-    expect(rejectedCount(RESULT.videos[0])).toBe(9);
-    expect(aggregateResult(RESULT)).toEqual({ written: 7, rejected: 9, watermarks: 2, elapsed: 4.25 });
+    expect(rejectedCount(RESULT.videos[0])).toBe(15);
+    expect(aggregateResult(RESULT)).toEqual({ written: 7, rejected: 15, watermarks: 2, elapsed: 4.25 });
   });
 });

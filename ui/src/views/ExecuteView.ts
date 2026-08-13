@@ -67,6 +67,9 @@ export function renderExecuteView(store: Store, options: ExecuteViewOptions = {}
     else if (store.run.status === "done") status.textContent = t("run_done", { count: store.run.totalWritten, time: store.run.elapsedSeconds.toFixed(1) });
     else if (store.run.status === "error") status.textContent = t("run_error", { msg: store.run.errorMessage });
     else if (store.run.status === "running" && store.run.stage === "video") status.textContent = t("processing_video", { current: store.run.current, total: store.run.total });
+    else if (store.run.status === "running" && store.run.stage === "proxy") status.textContent = t("stage_proxy", { current: store.run.current });
+    else if (store.run.status === "running" && store.run.stage === "strong-dedup") status.textContent = t("stage_strong_dedup", { current: store.run.current, total: store.run.total });
+    else if (store.run.status === "running" && store.run.stage === "native-write") status.textContent = t("stage_native_write", { current: store.run.current, total: store.run.total });
     else if (store.run.status === "running" && store.run.stage) status.textContent = `${store.run.stage} · ${store.run.current}/${store.run.total}`;
     else if (store.run.status === "running") status.textContent = t("run_started");
     else status.textContent = t("ready");

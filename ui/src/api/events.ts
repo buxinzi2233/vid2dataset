@@ -32,7 +32,10 @@ export interface VideoStatsSummary {
   rejected_ssim: number;
   rejected_color: number;
   rejected_completeness: number;
+  rejected_content: number;
+  rejected_temporal: number;
   auto_blur_threshold: number | null;
+  frames_scanned: number;
   elapsed_s: number;
   watermarks: WatermarkSummary[];
 }

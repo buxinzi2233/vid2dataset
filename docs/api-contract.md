@@ -1,6 +1,6 @@
 # vid2dataset Tauri 接口契约
 
-> 文档日期：2026-08-12。字段级权威参考：`ExtractConfig`（Pydantic）、`PipelineResult`/`VideoStats`、`TagSummary`、`HardwareProfile`/`RuntimeStatus`、`ReleaseInfo`、`VideoMeta`。
+> 文档日期：2026-08-13。字段级权威参考：`ExtractConfig`（Pydantic）、`PipelineResult`/`VideoStats`、`TagSummary`、`HardwareProfile`/`RuntimeStatus`、`ReleaseInfo`、`VideoMeta`。
 > 命名空间统一：`<域>.<方法>` / `<域>.<事件>`，前端 ↔ Rust ↔ sidecar 三方同名。
 
 ---
@@ -131,7 +131,7 @@ interface RuntimeStatus { available: boolean; cached: boolean; version: string |
 
 | 事件名 | payload | 说明 |
 |---|---|---|
-| `extract:progress` | `{ stage, current, total }` | `stage`: `video` / `decode` / `tag:tagging` / `tag:<pkg>` 下载 |
+| `extract:progress` | `{ stage, current, total }` | `stage`: `video` / `decode` / `proxy` / `strong-dedup` / `native-write` / `tag:tagging` / `tag:<pkg>` 下载 |
 | `extract:log` | `{ line }` | 控制台一行（来自 Python logging） |
 | `extract:done` | `PipelineResult` | 提取完成（`PipelineResult.to_summary_dict()`） |
 | `extract:error` | `{ message }` | 提取失败 |
@@ -140,6 +140,30 @@ interface RuntimeStatus { available: boolean; cached: boolean; version: string |
 | `tagger:done` | `{ tagged, failed, total, cancelled, rejected, pruned_tags, tag_counts, per_image }` 或 `{ error }` | `tagger.run` 完成（TagSummary） |
 
 Bridge/NDJSON 事件名保留点号（如 `extract.progress`）；Rust 转发到 Tauri WebView 时将点号映射为冒号（如 `extract:progress`），以满足 Tauri 2 的事件名校验规则。
+
+### 原生无损两阶段配置
+
+`output_mode = "native"` 时，第一阶段通过 NVDEC 顺序解码完整帧流，并以 `scale_cuda` 生成代理帧；常规间隔候选之外，任何达到阈值的转场会立即进入候选。第二阶段按源 PTS 只回读胜出帧，以源视频尺寸下载到 CPU 并编码。该模式强制 `output_format = "png"`，不执行 bucket resize 或裁切。
+
+强力去重由以下 `ExtractConfig` 字段控制，并会被用户预设保存：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `dedup_mode` | `"standard" \| "strong"` | `strong` 仅可搭配 `output_mode = "native"` |
+| `dedup_proxy_edge` | int | CUDA 代理帧长边，默认 768 |
+| `native_scan_interval_seconds` | float | 常规候选最大时间间隔；其间仍逐帧检测转场，默认 0.25 秒 |
+| `native_scene_threshold` | float | 全帧扫描时的转场灵敏度，越低捕获越细，默认 0.08 |
+| `dedup_phash_distance` | int | pHash 近重复召回距离 |
+| `dedup_feature_threshold` | float | 空间感知特征余弦相似度阈值 |
+| `dedup_content_threshold` | float | 全视频构图多样性阈值；相隔很远的相似构图也竞争，0 关闭 |
+| `dedup_strong_ssim_threshold` | float | 最终 SSIM 确认阈值 |
+| `dedup_min_seconds` | float | 相似帧参与竞争的时间邻域；不同内容不会因时间接近被删除 |
+| `dedup_temporal_feature_threshold` | float | 时间邻域内判定增量运动相似的特征阈值 |
+| `dedup_scope` | `"video" \| "global"` | 是否跨视频去重 |
+| `dedup_keep` | `"first" \| "sharpest"` | 重复簇保留策略 |
+| `png_compression` | 0..9 | 全部无损；原生 4K 推荐 1 |
+
+默认原生强去重预设关闭相对清晰度百分位裁剪，只应用 `blur_threshold` 绝对底线，避免独特但较柔和的有效片段被视频中其他高锐度片段挤掉。预设采用 `dedup_scope = "video"`、`dedup_content_threshold = 0.35`、`dedup_min_seconds = 0` 且不设置 `max_per_video`：全视频相似构图会竞争，但时间接近本身不会导致删除，输出数量由每条视频实际有效、多样内容决定。
 
 ---
 
@@ -160,7 +184,9 @@ Bridge/NDJSON 事件名保留点号（如 `extract.progress`）；Rust 转发到
       "written": 42, "rejected_blur": 12, "rejected_luma": 0,
       "rejected_too_small": 0, "rejected_dup": 7, "rejected_ssim": 3,
       "rejected_color": 0, "rejected_completeness": 0,
-      "auto_blur_threshold": 46.0, "elapsed_s": 4.2,
+      "rejected_content": 9, "rejected_temporal": 11,
+      "auto_blur_threshold": 46.0, "frames_scanned": 11520,
+      "elapsed_s": 4.2,
       "watermarks": [], "records": []
     }
   ]

@@ -1,5 +1,5 @@
 import { t } from "../i18n";
-import { PARAMS, SWITCHES, type SwitchMeta } from "../state/paramMeta";
+import { SWITCHES, paramsForConfig, type SwitchMeta } from "../state/paramMeta";
 import type { Store } from "../state/store";
 import { el } from "./el";
 
@@ -34,7 +34,11 @@ export function renderInspector(store: Store): Inspector {
     if (item.key === "decode_mode") {
       return store.config.decode_mode === "keyframe" ? t("keyframe_on") : t("accurate_off");
     }
-    const enabled = Boolean(store.config[item.key as keyof typeof store.config]);
+    const enabled = item.key === "output_mode"
+      ? store.config.output_mode === "native"
+      : item.key === "dedup_mode"
+        ? store.config.dedup_mode === "strong"
+        : Boolean(store.config[item.key as keyof typeof store.config]);
     const state = enabled ? t("enabled") : t("disabled");
     if (item.key === "gpu_accel" && enabled) return `${state} · ${store.gpu.status.toUpperCase()}`;
     return state;
@@ -46,11 +50,12 @@ export function renderInspector(store: Store): Inspector {
 
   function render(): void {
     root.classList.toggle("open", store.inspectorOpen);
-    const paramIndex = PARAMS.findIndex((item) => item.key === store.selectedParam);
+    const params = paramsForConfig(store.config as Record<string, unknown>);
+    const paramIndex = params.findIndex((item) => item.key === store.selectedParam);
     const switchIndex = SWITCHES.findIndex((item) => item.key === store.selectedParam);
-    const selectedParam = paramIndex >= 0 ? PARAMS[paramIndex] : null;
+    const selectedParam = paramIndex >= 0 ? params[paramIndex] : null;
     const selectedSwitch = switchIndex >= 0 ? SWITCHES[switchIndex] : null;
-    const fallback = PARAMS[0];
+    const fallback = params[0];
 
     if (selectedSwitch) {
       code.textContent = `S.${String(switchIndex + 1).padStart(2, "0")}`;
@@ -69,7 +74,7 @@ export function renderInspector(store: Store): Inspector {
 
     summary.innerHTML = "";
     appendSummaryHeading(t("numeric_params"));
-    for (const [index, item] of PARAMS.entries()) {
+    for (const [index, item] of params.entries()) {
       const row = el("button", `i-row${item.key === store.selectedParam ? " selected" : ""}`);
       row.type = "button";
       const top = el("span", "row-top");
